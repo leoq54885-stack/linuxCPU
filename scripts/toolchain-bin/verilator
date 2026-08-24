@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+LOCAL="$ROOT/.toolchain/verilator"
+
+if [[ -x "$LOCAL/usr/bin/verilator_bin" ]]; then
+    export VERILATOR_ROOT="$LOCAL/usr/share/verilator"
+    exec "$LOCAL/usr/bin/verilator_bin" "$@"
+fi
+if [[ -x /usr/bin/verilator ]]; then
+    exec /usr/bin/verilator "$@"
+fi
+printf 'verilator is unavailable; run %s/setup.sh\n' "$ROOT" >&2
+exit 127

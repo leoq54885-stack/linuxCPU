@@ -1,0 +1,30 @@
+# shellcheck shell=bash
+# Exact upstream revisions used by setup.sh and doctor.sh.
+
+OPENC906_URL="https://github.com/XUANTIE-RV/openc906.git"
+OPENC906_COMMIT="b0c06eb1f8b3bae663bd8b87eac89ff48e68a57f"
+
+OPENSBI_URL="https://github.com/riscv-software-src/opensbi.git"
+OPENSBI_COMMIT="337c23dd66b821ac04a0f7bea313e7e7b30ecc49"
+
+LINUX_URL="https://github.com/torvalds/linux.git"
+LINUX_COMMIT="d58772d8520c7ef247c4b95c9bd76d3a25da9ff5"
+
+BUILDROOT_URL="https://github.com/buildroot/buildroot.git"
+BUILDROOT_COMMIT="d38b4915e9437c5492836914c0a0fff12b4f1031"
+
+# Ubuntu 24.04 amd64 package, unpacked locally rather than installed globally.
+IVERILOG_DEB_VERSION="12.0-2build2"
+IVERILOG_DEB_FILE="iverilog_12.0-2build2_amd64.deb"
+IVERILOG_DEB_SHA256="f19394cee05ad526e0eb3873bc6c17a5828f56df17fbe2db40cb66513a2d4667"
+
+# Source fallback reference for hosts where a local package is not suitable.
+IVERILOG_URL="https://github.com/steveicarus/iverilog.git"
+IVERILOG_COMMIT="4fd5291632232fbe1ba49b2c26bb6b2bf1c6c9cf"
+
+# Ubuntu 24.04 amd64 package, unpacked below .toolchain/verilator.  Verilator
+# is the practical Linux boot simulator; Icarus remains the independent RTL
+# smoke/cross-check implementation.
+VERILATOR_DEB_VERSION="5.020-1"
+VERILATOR_DEB_FILE="verilator_5.020-1_amd64.deb"
+VERILATOR_DEB_SHA256="bb74ca8c32c73eb903ee91da64c8b58cfbe095c229967a95782108afb67bb3ca"

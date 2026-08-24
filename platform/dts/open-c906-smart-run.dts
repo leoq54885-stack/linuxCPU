@@ -1,0 +1,74 @@
+/dts-v1/;
+
+/ {
+	#address-cells = <2>;
+	#size-cells = <2>;
+	compatible = "xuantie,open-c906-smart-run";
+	model = "OpenC906 smart_run RTL simulation";
+
+	aliases {
+		serial0 = &uart0;
+	};
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+		bootargs = "earlycon=uart8250,mmio32,0x10015000 console=ttyS0,115200 rdinit=/init";
+	};
+
+	memory@0 {
+		device_type = "memory";
+		reg = <0x0 0x00000000 0x0 0x01000000>;
+	};
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		timebase-frequency = <100000000>;
+
+		cpu0: cpu@0 {
+			compatible = "thead,c906", "riscv";
+			device_type = "cpu";
+			reg = <0>;
+			status = "okay";
+			riscv,isa = "rv64imafdc";
+			mmu-type = "riscv,sv39";
+
+			cpu0_intc: interrupt-controller {
+				#interrupt-cells = <1>;
+				compatible = "riscv,cpu-intc";
+				interrupt-controller;
+			};
+		};
+	};
+
+	/* Internal C906 APB window: PLIC offset 0, CLINT offset 0x04000000. */
+	clint: clint@4004000000 {
+		/* 32-bit APB registers and no memory-mapped MTIME: not SiFive CLINT. */
+		compatible = "thead,c900-clint";
+		reg = <0x40 0x04000000 0x0 0x00010000>;
+		interrupts-extended = <&cpu0_intc 3>, <&cpu0_intc 7>;
+	};
+
+		plic: interrupt-controller@4000000000 {
+			#interrupt-cells = <1>;
+			/* OpenSBI must enable the C900/C906 S-mode delegation register. */
+			compatible = "thead,c900-plic";
+			reg = <0x40 0x00000000 0x0 0x04000000>;
+		interrupt-controller;
+		riscv,ndev = <255>;
+		interrupts-extended = <&cpu0_intc 11>, <&cpu0_intc 9>;
+	};
+
+	uart0: serial@10015000 {
+		compatible = "ns16550a";
+		reg = <0x0 0x10015000 0x0 0x00001000>;
+		clock-frequency = <100000000>;
+		current-speed = <115200>;
+		interrupt-parent = <&plic>;
+		/* xx_intc_vld[0] is placed at C906 PLIC source 16. */
+		interrupts = <16>;
+		reg-io-width = <4>;
+		reg-shift = <2>;
+		status = "okay";
+	};
+};

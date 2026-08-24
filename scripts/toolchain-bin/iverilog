@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+LOCAL="$ROOT/.toolchain/iverilog"
+
+if [[ -x "$LOCAL/usr/bin/iverilog" ]]; then
+    exec "$LOCAL/usr/bin/iverilog" \
+        -B "$LOCAL/usr/lib/x86_64-linux-gnu/ivl" "$@"
+fi
+if [[ -x /usr/bin/iverilog ]]; then
+    exec /usr/bin/iverilog "$@"
+fi
+printf 'iverilog is unavailable; run %s/setup.sh\n' "$ROOT" >&2
+exit 127

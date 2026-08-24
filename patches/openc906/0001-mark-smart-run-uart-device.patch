@@ -1,0 +1,15 @@
+diff --git a/C906_RTL_FACTORY/gen_rtl/mmu/rtl/sysmap.h b/C906_RTL_FACTORY/gen_rtl/mmu/rtl/sysmap.h
+--- a/C906_RTL_FACTORY/gen_rtl/mmu/rtl/sysmap.h
++++ b/C906_RTL_FACTORY/gen_rtl/mmu/rtl/sysmap.h
+@@ -16,7 +16,10 @@
+ // ADDR is 28-bit, 4K address
+ // Flag includes: Strong Order, Cacheable, Bufferable, Shareable, Security
+ 
+-  `define SYSMAP_BASE_ADDR0  28'h8ffff
++  // smart_run RAM ends at 0x00ffffff.  Start the existing strong-order
++  // peripheral window at the Linux UART page so C906 issues exact, non-cacheable
++  // MMIO transactions instead of 128-bit cache-line transactions.
++  `define SYSMAP_BASE_ADDR0  28'h10015
+   `define SYSMAP_FLG0        5'b01111
+   
+   `define SYSMAP_BASE_ADDR1  28'hbffff

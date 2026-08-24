@@ -1,0 +1,39 @@
+# Pinned upstream checkouts (managed by setup.sh)
+/openc906/
+/opensbi/
+/linux/
+/buildroot/
+
+# Project-local tools, downloads and generated output
+/.toolchain/
+/.cache/
+/output/
+/build/
+/work/
+/sim_work/
+__pycache__/
+*.py[cod]
+
+# Generated simulation/build files outside the standard output directories
+*.o
+*.elf
+*.bin
+*.pat
+*.vcd
+*.vvp
+*.log
+*.report
+
+# Keep the final, independently verified RTL acceptance log.
+!/log/c906-linux-verilator-laptop-success.log
+
+# QEMU test build artifacts (script and README are tracked)
+/QEMUtest/initramfs/
+/QEMUtest/initramfs.cpio
+/QEMUtest/qemu-output.log
+
+# Editors and operating systems
+*.swp
+*.swo
+*~
+.DS_Store

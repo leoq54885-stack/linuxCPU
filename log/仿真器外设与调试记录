@@ -1,0 +1,517 @@
+	        RtosCPU	                              linuxCPU
+CPU	    E902（RV32EMC, 16 寄存器, 当前配置 M-only） C906（RV64GC, 32 寄存器, M/S/U）
+SoC	    Wujian100（CLIC, 256 KiB SRAM）             smart_run（PLIC+CLINT, 16 MiB RAM, UART/Timer/GPIO）
+OS	      FreeRTOS	                                 （Linux 7.2-rc7，2.1M） + OpenSBI
+仿真器	  Icarus Verilog	                            Verilator
+
+
+https://github.com/XUANTIE-RV/openc906/tree/main/smart_run
+目前C906 的 SoC 是 smart_run，定位是验证用最小 SoC
+
+MANIFEST.md 明确说"复用 smart_run 中已经连通的最小 SoC"
+没有 Ethernet、USB、SPI、I2C、DMA、GPU 等产品级外设
+还实例化了验证用途的 APB timer、GPIO、clock-control、stimulus 和 bus-delay 模块，
+但当前 Linux DTS/启动路径主要使用 RAM、UART、PLIC 和 CLINT
+没有 boot ROM 控制器，靠 testbench 直接 $fread 加载镜像到 RAM
+UART 是自定义的简化 8250/16550 寄存器兼容模型，不是完整商用 IP
+没有真实 PLL/Clock Manager；fpga_clk_gen 和 soc 中的 CPU/外设时钟实际直接来自输入时钟
+
+Linux 7.2-rc7，来自 Linus 官方仓库 https://github.com/torvalds/linux.git，pin 在 commit d58772d8520c7ef247c4b95c9bd76d3a25da9ff5。
+当前项目 Linux Image	2.1 MiB	tinyconfig + 最小驱动，无 GUI、无网络、无模块，initramfs 内嵌
+FreeRTOS 固件	约 48 KiB	历史对比估算；当前工作区没有可用于复核该数字的 .bin/.elf 产物
+
+
+== 项目选型 ==
+
+CPU 选型
+  候选：E902（RV32EMC）、E906/CH2601（RV32）、C906（RV64GC）
+  排除 E902：16 寄存器、M-only、无原子扩展、无 M/S/U 模式、无 MMU，不满足 Linux 最低要求
+  排除 CH2601/E906：无 MMU，不能走常规分页 Linux；片上存储也不足以支撑实用 NOMMU Linux
+  选定 OpenC906：RV64GC，支持 M/S/U 模式，Sv39 MMU，可运行完整 Linux
+  依据文档：Linux可行性与C906_CH2601方案评估.md
+
+SoC 选型
+  选定 smart_run：OpenC906 官方最小验证 SoC，已连通 CLINT + PLIC + UART + RAM
+  RAM 16 MiB（足够装 OpenSBI + Linux Image + initramfs）
+  无 boot ROM，靠 testbench $fread 直接加载镜像到 RAM
+  UART 为自定义的简化 8250/16550 寄存器兼容模型，非完整商用 IP
+  另有验证用途的 APB timer、GPIO、clock-control、stimulus 和 bus-delay
+  无 Ethernet/USB/SPI/I2C/DMA/GPU，也没有真实 PLL
+
+仿真器选型
+  主选 Verilator：编译为 C++ 可执行文件，速度远超 iverilog
+  辅选 iverilog：独立交叉验证，速度慢，仅用于冒烟测试
+  QEMU：仅用于软件功能验证，不参与 RTL 仿真流程
+
+软件版本（versions.lock）
+  OpenC906：pin 在固定 commit
+  OpenSBI：pin 在固定 commit，作为 M-mode firmware 加载 Linux payload
+  Linux：7.2-rc7，pin 在 d58772d8520c7ef247c4b95c9bd76d3a25da9ff5
+  Buildroot：pin 在固定 commit（当前未使用，rootfs 用手写 init.c 替代）
+
+== 历史实验归档位置 ==
+/home/saya2/cy/tmp/linuxCPU/output/runs
+包含：原始数据，实验参数，改动内容等记录
+
+== 改动内容 ==
+
+configs/linux-c906-minimal.fragment
+  新增 CONFIG_ERRATA_THEAD=y
+  新增 CONFIG_ERRATA_THEAD_MAE=y
+  新增 # CONFIG_ERRATA_THEAD_CMO is not set
+  原有：64BIT/MMU/RISCV_SBI/FPU/PLIC/UART8250 等最小驱动配置不变
+  （2026-08-20 GPT 曾加入 VT=n/LEGACY_PTYS=n/HZ=100 优化，2026-08-24 已回退，
+   恢复为已验证可跑到 PID 1 的原始配置 VT=y/LEGACY_PTYS=y/HZ=250）
+
+scripts/build-linux.sh
+  新增 ERRATA_THEAD ERRATA_THEAD_MAE 到 --enable 列表
+  新增 ERRATA_THEAD_CMO 到 --disable 列表
+  新增构建后断言：检查 .config 中 CONFIG_ERRATA_THEAD=y 和 CONFIG_ERRATA_THEAD_MAE=y，
+  若 Kconfig 静默取消则构建失败退出
+  （2026-08-20 GPT 曾加入 VT/PTYS/HZ 断言，2026-08-24 已回退）
+
+scripts/prepare-rtl-image.py（GPT 修改）
+  注入 UART 诊断观测点：CPU/SoC 侧 AXI 请求、APB LSR、UART 状态机
+  每个边界只打印前 4 次，之后每 10 万条指令打印一次汇总
+  仅读取信号不改变行为，用于 UART 轮询卡死根因分析
+
+patches/openc906/0001-mark-smart-run-uart-device.patch（GPT 新增）
+  修改 C906 MMU sysmap.h：SYSMAP_BASE_ADDR0 从 0x8ffff 改为 0x10015
+  使 UART 地址 0x10015000 落入 strong-order、non-cacheable 区间
+  两个常量都是 4 KiB 页号边界；实际 strong-order 范围变为
+  0x10015000..0xbfffefff，并非只修改 UART 的 4 KiB 页面
+  smart_run 有效 RAM 只到 0x00ffffff，因此当前 16 MiB RAM 属性不受影响；
+  如果以后在该地址范围扩展 RAM 或其他有特殊属性的设备，需要重新设计 sysmap 分区
+  编译时 git apply 临时生效，编译后 trap cleanup 自动 reverse 回退
+  目的：让 CPU 对 UART 发出精确大小的 non-cacheable 事务，而非 128-bit cache-line 事务
+
+scripts/build-verilator-linux.sh（GPT 修改）
+  新增 patch 自动应用/回退逻辑（git apply + trap cleanup）
+  新增构建签名 c906-linux.build-info：记录 LINUXCPU_FAST_UART 模式和输入文件 SHA256
+
+scripts/run-verilator-linux.sh（GPT 修改）
+  新增构建签名校验：模型缺失或签名不匹配时自动重建，防止静默复用过期模型
+
+
+== 调试历程 ==
+
+1. 异常风暴（已修复）
+  现象：RTL仿真 retired=392万条指令后，PC卡在 0xff80104eec/0xff80104f78/0xff80104f80
+        三点循环，对应 handle_exception 入口（S-mode trap handler），持续到 MAX_RUN_TIME。
+  根因：C906 RTL 复位时 MAEE=1，要求页表 PTE 使用非标准属性位（01110 表示可缓存内存）。
+        内核由 tinyconfig 生成，未启用 CONFIG_ERRATA_THEAD / CONFIG_ERRATA_THEAD_MAE，
+        导致 MMU 开启后页表 walk 异常，sret 回到原指令再次触发，形成异常风暴。
+  修复：configs/linux-c906-minimal.fragment 和 scripts/build-linux.sh 中启用
+        CONFIG_ERRATA_THEAD=y, CONFIG_ERRATA_THEAD_MAE=y，
+        保持 CONFIG_ERRATA_THEAD_CMO=n（单变量验证）。
+        build-linux.sh 增加构建后断言，防止 Kconfig 静默取消 MAE。
+  验证：2026-08-12 重新构建 Image/OpenSBI/Verilator 模型后重跑仿真，
+        retired=392万后 PC 进入高地址 0xff80xxxxx 但未卡在 handle_exception，
+        内核正常前进至 retired=427万，异常风暴消失。
+
+2. UART 轮询卡死（根因修复已通过定向验证，待完整 Linux 验收）
+  现象：retired=427万起 PC 卡在 0xff800cea48~0xff800cec20 循环，
+        对应 serial_putc 函数中的 LSR 轮询循环（等待 THRE/TEMT 置位）。
+  根因链：
+        1) 旧 C906 sysmap 把 0x10015000 UART 归入普通可缓存区域。
+        2) OpenSBI 的 M-mode 裸物理访问虽然不走 Linux 页表，但仍使用 sysmap 提供 PMA 属性。
+        3) UART 初始化因此产生 cacheable 的 128-bit 对齐事务；smart_run AXI→AHB→APB
+           桥不能从这种事务中恢复目标 UART 寄存器 lane。
+        4) 原本写往 IER/LCR/DLL/DLM 的数据被错投，UART 实际看到 THR 写入 00/36/00，
+           最终保持 divisor=0000、LCR=00，发送器状态异常。
+        5) quiet OpenSBI 未必在该处打印或等待 THRE，仍可能继续进入 Linux；Linux 后续
+           serial_putc 准确读取 LSR 时，看到未恢复的 THRE/TEMT 并无限轮询。
+  旧模型诊断数据（LINUXCPU_FAST_UART=0，retired≈110万，OpenSBI M-mode 阶段）：
+        CPU AR addr=0010015010 size=4 len=0 cache=f  ← 错误的缓存行事务，是问题证据
+        APB LSR 访问次数为 0                         ← 读取没有落到 LSR 0x10015014
+        divisor=0000 lcr=00 thre=0 temt=0            ← UART 初始化已经失败
+        注意：循环中的指令也会持续退休，因此 retired 增长本身不能证明程序正常推进。
+  修复：patches/openc906/0001-mark-smart-run-uart-device.patch
+        将 SYSMAP_BASE_ADDR0 从 0x8ffff 改为 0x10015，
+        使 UART 地址落入 strong-order、non-cacheable 区间。
+        编译时临时 apply，编译后自动 reverse，不污染上游源码。
+        Linux 侧 CONFIG_ERRATA_THEAD_MAE 已启用，PTE 属性也会标记 MMIO 为 non-cacheable。
+  定向验证：使用几十条 M-mode 指令在同一 C906/SoC 模型中初始化并访问 UART，得到
+        divisor=0036、LCR=03
+        CPU/SoC AR addr=0010015014 size=2 len=0 cache=0
+        APB 收到真实 LSR 访问，真实 UART 发送器随后恢复 THRE/TEMT
+        这证明 sysmap 补丁已修复已定位的 PMA/总线错投问题。
+  FAST_UART：LINUXCPU_FAST_UART=1 通过 prepare-sim-uart.py 替换 uart_apb_reg.v，
+        强制 THRE/TEMT 恒为 1，消除波特率等待（每字符约 8680 周期）。
+        串口输出内容仍完整（testbench $display 捕获 APB 写入），不影响 timer-diag 和中断诊断。
+        代价是需要重编译 Verilator 模型（filelist 和 build-info 变化）。
+        注意：多次对比实验表明 FAST_UART=0 反而比 FAST_UART=1 快约 10%（见速度实验章节），
+        推测原因是 FAST_UART=1 改变了 Verilator 生成的 C++ 代码结构，影响 g++ 优化效果。
+        因此当前推荐使用 FAST_UART=0。
+  状态：UART 修复已验证生效。完整 Linux 长跑中 UART 输出正常，
+        divisor=0036、LCR=03、THRE=1、TEMT=1，串口日志完整输出至
+        clocksource 切换和 workingset 初始化。
+
+3. PLIC S-mode access fault（已修复）
+  现象：retired≈1347万时内核 panic：
+        [    3.733893] Oops - load access fault [#1]
+        CPU: 0 UID: 0 PID: 1 Comm: swaper/0
+        epc : 0xffffffff800b1c44 (plic_toggle)
+        badaddr: 0x4000002080  cause: 5 (load access fault)
+        随后进入 panic 后的 udelay 死循环，retired 持续增长但启动不再推进。
+  根因：
+        1) PLIC 在 C906 CPU 核内部实例化（openC906.v:916 plic_top x_aq_plic_top），
+           不是 smart_run SoC 外挂外设。BIU 在核内截获 0x4000000000 窗口
+           （aq_biu_req_arbiter.v:438 apb_ar_hit），不送出核外 AXI。
+        2) C906 PLIC 有非标准 S-mode 访问许可开关 plic_s_permission_t
+           （plic_ctrl.v:188-189），复位为 0（禁止 S-mode 访问）。
+        3) OpenSBI 已有 T-Head delegation 支持（opensbi/lib/utils/irqchip/plic.c:28,104-105），
+           当 PLIC_FLAG_THEAD_DELEGATION 设置时向 0x40001ffffc 写 bit 0 开启许可。
+        4) 但 DTS（platform/dts/open-c906-smart-run.dts:53）compatible 写的是
+           "riscv,plic0"，OpenSBI 只在匹配 "thead,c900-plic" 时才设置 delegation flag
+           （fdt_irqchip_plic.c:105-106），因此 S-mode PLIC 访问未被放行。
+  修复：将 DTS PLIC compatible 从 "riscv,plic0" 改为 "thead,c900-plic"。
+        OpenSBI 进入 Linux 前自动执行 delegation 写入。
+        Linux irq-sifive-plic.c:531 也匹配该 compatible。
+  验证：2026-08-14 长跑日志显示 PLIC 探测成功：
+        [    3.762180] riscv-plic: interrupt-controller@4000000000: mapped 256 interrupts with 1 handlers for 2 contexts.
+        越过原 panic 点（retired≈1347万），仿真继续推进。
+
+4. 仿真内部时间窗口过小（已修复）
+  现象：仿真在 7 秒模拟时间处自行停止，未到 Linux 启动完成。
+  根因：testbench 内部 MAX_RUN_TIME 写死为 7e9 ns（7 秒模拟时间），
+        外层 LINUXCPU_LINUX_SIM_TIMEOUT 是墙钟超时，两者独立。
+  修复：scripts/prepare-rtl-image.py 中将 MAX_RUN_TIME 从 7000000000 改为 70000000000
+        （70 秒模拟时间），重建模型后生效。
+
+5. Error 141 SIGPIPE 竞态（GPT 引入并已修复）
+  现象：首次通过新增固件校验执行 make run 时偶发 Error 141。
+  根因：GPT 新增的 verify-firmware-dtb.sh 中 nm | awk 管道，awk 找到目标后提前退出，
+        pipefail 下 nm 收到 SIGPIPE（128+13=141）成为脚本返回码。
+  修复：改为完整读取符号表，连续 100 次校验未再复现。
+
+6. 裸机看门狗误杀 Linux WFI（已修复）
+  现象：第二次长跑 retired≈3262万时，testbench 检测到 50000 周期无指令退休，
+        主动 $finish。stall PC = 0xff80102306 -> arch_cpu_idle 的 fence; wfi。
+  根因：上游 OpenC906 smart_run 裸机 testbench 的无退休看门狗 LAST_CYCLE=50000，
+        100MHz 下仅 0.5ms。Linux HZ=250 的正常 tick 间隔是 400,000 周期（4ms），
+        看门狗比一个 tick 短 8 倍。CPU 合法执行 WFI 等待 tick 时被提前杀掉。
+        之前没暴露是因为旧 PLIC panic 后 CPU 一直在 udelay 中退休指令；
+        PLIC 修好后内核首次进入正常 idle 才触发这个假阳性。
+        代码来源是上游裸机 testbench，用于短测试合理；问题在本工程 Linux overlay
+        原样保留了裸机退出条件。
+  修复：scripts/prepare-rtl-image.py 中将 Linux 专用 LAST_CYCLE 从 50000 改为
+        2000000（20ms，约 5 个 tick），不修改上游裸机 testbench 默认语义。
+  同时新增 timer 观测点（[timer-diag]）：
+    - mtimecmp 更新（前 8 次全打印，之后每 1000 次打印一次）
+    - MTIP/STIP 边沿检测
+    - 看门狗触发时输出 mtime、mtimecmp、delta、MTIP、STIP、MIE、MIDELEG、
+      privilege、累计事件数，一次日志即可区分 5 种故障模式：
+      timer 未编程 / 尚未到期 / MTIP 未产生 / OpenSBI 未转发 / Linux 未处理
+    - 诊断等待真实 reset（linux_reset_seen 门控），避免启动前虚假事件
+  信号层级引用：
+    LINUX_CLINT = CPU_TOP.x_clint_top.x_clint_func（clint_mtime_reg、mtimecmp0_reg、
+                  mtimecmph0_reg、clint_core0_mt_int）
+    LINUX_TRAP_CSR = CPU_TOP.x_aq_top_0.x_aq_core.x_aq_cp0_top.x_aq_cp0_regs.
+                     x_aq_cp0_trap_csr（mip_value[5]、mie_value、mideleg_value、
+                     cp0_yy_priv_mode）
+  验证：Verilator 编译成功，make doctor 22 passed，2 秒探针正常加载 RAM 并退休
+        前 32 条指令，无虚假 timer 事件。旧日志已备份为
+        c906-linux-verilator-before-linux-watchdog-fix.log（79088 行）。
+
+== 第二次长跑 stall 点详细分析 ==
+
+stall PC = 0xff80102306 -> arch_cpu_idle（fence; wfi; ret）
+arvalid=0, awvalid=0：CPU 没有发出任何 AXI 请求
+trap 信息全 0：不是异常导致
+
+串口完整输出（全部 4258 条 THR write）：
+  [    0.000000] Linux version 7.2.0-rc7+ ...
+  [    0.000000] SBI specification v3.0 detected
+  [    0.000000] earlycon: uart8250 at MMIO32 0x10015000
+  [    3.762180] riscv-plic: mapped 256 interrupts with 1 handlers for 2 contexts.
+  [   15.830431] Serial: 8250/16550 driver, 4 ports, IRQ sharing disabled
+  [   16.245279] of_serial 10015000.serial: error -6: IRQ index 0 not found
+  [   16.354647] printk: legacy console [ttyS0] disabled
+  [   16.461722] 10015000.serial: ttyS0 at MMIO 0x10015000 (irq = 0, base_baud = 6250000) is a 16550A
+  [   16.489739] printk: legacy console [ttyS0] enabled
+  [   16.510038] printk: legacy bootconsole [uart8250] disabled
+
+PC 采样分析（retired=32M 到 stall，每 10,000 条采一次）：
+  最后函数序列：serial_putc -> vruntime_eligible -> free_to_partial_list -> arch_cpu_idle
+  全部是 8250 串口驱动注册（sysfs_create_dir_ns、class_dev_iter_next、klist_next、
+  kernfs_put）和调度器操作。内核已进入 do_basic_setup()->do_initcalls()，
+  stall 发生在串口驱动注册附近的一次调度空闲中，尚未从 do_basic_setup() 返回，
+  尚未走到 wait_for_initramfs()、console_on_rootfs() 和 run_init_process("/init")。
+
+initramfs 静态验证（无问题）：
+  - vmlinux 中有 __initramfs_start (0xffffffff801355d0) 和 __initramfs_size (888 bytes)
+  - 提取并 gzip 解压后是完整的 cpio 归档，包含 dev/console、proc、sys、init
+  - init 二进制 MD5 与 output/rootfs/init 一致
+  - strings 中包含 "linuxCPU: reached minimal RISC-V userspace" 和 "PID 1 is alive"
+  - init 是 ELF 64-bit RV64GC 静态链接，入口 _start
+
+timer 中断路径（无 SSTC 扩展，.config 中无 SSTC）：
+  Linux S-mode -> ecall SBI timer -> OpenSBI M-mode -> 写 CLINT mtimecmp
+  -> mtime 增长到 mtimecmp -> MTIP 置位 -> OpenSBI 转发 STIP 给 S-mode
+  -> Linux riscv_timer_interrupt -> 唤醒
+  静态证据：pad_cpu_sys_cnt 每个时钟上升沿加一，经 aq_sysio_top.ccvr 送入
+  CLINT sysio_clint_mtime，自由运行计数器在 RTL 连接上存在。
+  运行时待确认：SBI TIME ecall 是否编程 mtimecmp、MTIP 是否产生、
+  OpenSBI 是否转发 STIP、Linux timer handler 是否执行。
+
+次要问题（独立，非本次终止原因）：
+  of_serial 10015000.serial: error -6 (ENXIO)，UART IRQ index 0 not found，
+  ttyS0 irq=0 退化轮询模式。串口仍正常输出。待跨过 WFI 后追踪 UART IRQ domain 映射。
+
+== 长跑状态 ==
+
+2026-08-15/16 第三次长跑（看门狗修复后，无宿主超时，timer 观测启用）：
+  命令：LINUXCPU_FAST_UART=0 LINUXCPU_LINUX_SIM_TIMEOUT=0 make run
+  模型：LAST_CYCLE=2000000，含 timer-diag
+  结果：retired≈3262万，2,000,000 周期看门狗触发，stall PC=0xff80102306（arch_cpu_idle wfi）
+  timer-diag 输出：
+    mtimecmp update #1: mtime=0x000000001608e88e cmp=0xffffffff160ecaf6 delta=0xffffffff0005e268
+    watchdog: mtime=0x0000000078a3c9fc cmp=0xffffffff160ecaf6 delta=0xfffffffe9d6b00fa
+    mtip=0 stip=0 updates=1 mt_edges=0 st_edges=0 priv=01(S-mode)
+  诊断：mtimecmp 高 32 位为 0xffffffff，mtime 永远追不上，MTIP/STIP 从未产生。
+        timer 中断路径完全失效，WFI 永不唤醒。这次是真实故障，不是看门狗假阳性。
+  旧日志备份：output/logs/c906-linux-verilator-before-clint-fix.log
+
+7. CLINT mtimecmp 高位残留（已修复）
+  根因：
+    1) C906 CLINT RTL 是 32 位 APB MMIO（clint_func.v: paddr[31:0]、pwdata[31:0]），
+       mtimecmp0（offset 0x4000）和 mtimecmph0（offset 0x4004）是两个独立 32 位寄存器。
+    2) 项目 DTS 将 CLINT 标为 compatible="riscv,clint0"，OpenSBI 匹配 sifive_clint_quirks，
+       其中 has_64bit_mmio=true（fdt_timer_mtimer.c:143-147,161）。
+    3) OpenSBI 因此选择 mtimer_time_wr64，执行单条 sd（64 位 store）写 mtimecmp（aclint_mtimer.c:34-36）。
+    4) C906 CLINT APB 只接受 32 位写，sd 的低 32 位写入 mtimecmp0 成功，
+       高 32 位未写入 mtimecmph0，保持复位值 0xffffffff。
+    5) 64 位 mtimecmp = 0xffffffff160ecaf6，远大于 mtime，timer 中断永不触发。
+  修复：将 DTS CLINT compatible 从 "riscv,clint0" 改为 "thead,c900-clint"。
+        OpenSBI 匹配 thead_clint_quirks（fdt_timer_mtimer.c:149-153,164），
+        has_64bit_mmio 默认 false，使用 mtimer_time_wr32 三步 32 位写序列：
+          low=-1 -> high=value>>32 -> low=value
+        同时设置 clint_without_mtime=true（C906 mtime 由 aq_sysio_top sys_cnt 提供，不在 CLINT 寄存器空间）。
+  验证：
+    - 新增 make smoke-clint 定向对照测试（scripts/smoke-clint-mtimecmp.sh + platform/tests/clint-mtimecmp-smoke.A）
+      64 位路径：精确复现 cmp=0xffffffff12345678（高字残留）
+      32 位路径：得到 cmp=0x0000000012345678（完整更新），通过
+    - DTB/OpenSBI 固件已重建，内嵌 DTB 逐字节一致
+    - make doctor 24 passed，0 failed
+    - doctor.sh 和 verify-firmware-dtb.sh 增加 thead,c900-clint 断言
+  归因：本项目 DTS 集成错误，不是上游 OpenC906 RTL 或 OpenSBI 的缺陷。
+        与 PLIC 的错误完全同类——都是 DTS compatible 选错导致 OpenSBI 走标准路径而非 T-Head 特化路径。
+        此前没暴露是因为 SBI TIME 和 time CSR clocksource 表面正常，
+        只有首次编程 tick 后进入 WFI 才暴露。
+
+  这是本项目集成 DTS 时引入的第二个 DTS compatible 错误（第一个是 PLIC 的 riscv,plic0 -> thead,c900-plic）。
+
+2026-08-16 第四次长跑（CLINT 修复后，FAST_UART=0，已中止）：
+  命令：LINUXCPU_FAST_UART=0 LINUXCPU_LINUX_SIM_TIMEOUT=0 make run
+  速度实测（p 核亲和后）：
+    0-82 min: 3.91M retired -> 277 万/小时
+    82-122 min: 5.02M retired -> 163 万/小时（下降 41%）
+  原因：内核进入串口密集输出阶段后大量周期消耗在 UART 波特率等待
+  预估到 stall 点（32.6M）约 17 小时，太慢。已中止。
+
+2026-08-16 第五次长跑（CLINT 修复后，FAST_UART=1）：
+  命令：LINUXCPU_FAST_UART=1 LINUXCPU_LINUX_SIM_TIMEOUT=0 make run
+  目标：验证 timer 中断能否正常唤醒 WFI，内核能否继续推进到 run_init_process 并到达 PID 1
+  改动：重编译 Verilator 模型（FAST_UART=1，替换 uart_apb_reg.v 消除波特率等待）
+
+  手动全量运行命令：
+    LINUXCPU_FAST_UART=1 LINUXCPU_JOBS=8 make rtl-linux
+    cat output/verilator/c906-linux.build-info
+    LINUXCPU_FAST_UART=1 LINUXCPU_LINUX_SIM_TIMEOUT=0 make run
+
+2026-08-16 第五次长跑（续，21:13 状态）：
+  timer 中断已确认正常工作，CLINT 修复生效：
+    - 8 次 mtimecmp update，实际 timer 值高 32 位为 0x00000000（不再是 0xffffffff）
+    - 4 次 MTIP edge value=1：mtime 追上 mtimecmp，timer 中断触发
+    - 4 次 STIP edge value=1：STIP 转发到 S-mode，mip=0xa0（STIP bit 置位）
+    - delta 约 0x5e22d（~386K cycles ≈ 3.86ms，与 CONFIG_HZ=250 的 4ms tick 吻合）
+    - update #4 的 cmp=0xffffffffffffffff 是 aclint_mtimer_warm_init 写 -1ULL 的
+      三步写中间态（第 2 步后高字变 0xffffffff），不是故障
+  内核推进：char 2910，retired 6.52M，已过 clocksource/sched_clock/pid_max 初始化
+  速度：绑核后约 3100 chars/min，约 206 万 retired/小时
+
+2026-08-17 第五次长跑最终状态（宿主关机中止）：
+  总 retired=28.15M，log 1,757,873 bytes，THR write 3717 个
+  绑 CPU 9 阶段（01:23-08:10, 407min）：12.64M -> 28.15M = 15.51M，约 229 万/小时
+  尚未到达 PID 1（stall 点约 32.6M）
+  归档：output/runs/run-20260816-fast1-timer-fixed-v2/（含 meta.txt 和 log-snapshot-0809.txt）
+
+2026-08-18 笔记本长跑（最终成功，i5-1135G7 单核，旧配置 HZ=250）：
+  启动：2026-08-18 09:28 CST，绑 CPU 2
+  配置：LINUXCPU_FAST_UART=0, LINUXCPU_LINUX_SIM_TIMEOUT=0
+  速度：约 93.5 万 retired/h（i5 单核，远慢于 i9 的 234 万/h）
+  终止：2026-08-23 10:39，因 testbench 最大仿真时间限制（meeting max simulation time）
+  总 retired=110.52M，UART 4663 字符
+  里程碑：
+    #3717 retired=24,476,374  plic mapped 行尾
+    #3718 retired=93,641,875  "Serial: 8250/16550 driver"
+    #4258 retired=97,465,987  ttyS0 注册 + bootconsole 切换
+    #4663 retired=107,288,831 "Run /init" + "PID 1 is alive"
+  日志：log/c906-linux-verilator-laptop-success.log（从笔记本远端拉回）
+
+== 减速原因定位（重要） ==
+
+第五次长跑（FAST_UART=1）前 3.5 小时速度仅 161 万 retired/小时，比第四次
+（FAST_UART=0，P 核亲和）的 247 万/小时慢 1.5 倍。经排查：
+
+  1. 不是 E 核问题：i9-14900HX 在 WSL 中只暴露 8 个 P 核（core_id 0-7，
+     每个 2 个 SMT 线程，共 16 个逻辑 CPU），没有 E 核。
+     dmesg 显示 "intel_pstate: CPU model not supported"，WSL 无 cpufreq 驱动。
+  2. 不是 FAST_UART 本身变慢：到同一串口里程碑 char 1752，
+     FAST_UART=1 retired=5,693,344，FAST_UART=0 retired=5,950,544，
+     前者反而少执行 4.3% 指令（消除了轮询循环）。
+  3. 真正原因：未绑核。PID 49191 亲和性为 0-15，875 次迁移 + SMT sibling
+     竞争导致 Verilator 不断漂移，缓存反复失效。
+  4. 在线绑核验证：taskset -pc 2 49191 后，速度从 161 万/小时提升到
+     约 206 万 retired/小时。
+
+结论：Verilator 长跑必须绑核到空闲 P 核，否则性能损失巨大。
+
+== 速度对比实验（2026-08-17） ==
+
+在 OpenSBI 早期阶段（0 个 THR write），统一取启动后第 5-10 分钟的 retired 增量
+作为速度指标，排除启动初期波动。所有实验均在 i9-14900HX WSL 环境下进行。
+
+已排除的选项：
+  - FAST_UART=1：多次实验均比 FAST_UART=0 慢约 10%。原因未知，推测是
+    FAST_UART=1 替换的 uart_apb_reg-fast.v 改变了 Verilator 生成的 C++ 代码
+    结构，影响 g++ 优化效果。阶段性结论：使用 FAST_UART=0。
+  - --threads 2/4（Verilator 多线程）：绑核时 168 万/h（-28%），不绑核时
+    111 万/h（-53%）。C906 是单核顺序设计，mtask 无法有效并行化，
+    线程同步开销反而拖累性能。排除。
+  - -march=native -funroll-loops：223 万/h（-5%），反而更慢。代码膨胀
+    影响 icache 命中率。排除。
+  - nice -n -20：258 万/h，与基准 234 万/h 差异在噪声范围内。排除。
+  - 去掉 testbench 诊断注入（uart-diag/timer-diag always 块）：261 万/h，
+    与有诊断的 268 万/h 差异在噪声范围内。诊断注入不是瓶颈。排除。
+  - --no-timing：代价大，收益不够明显，拒绝使用
+
+当前最优组合（阶段性结论）：
+  LINUXCPU_FAST_UART=0 + --timing + 绑 CPU 9 = 约 234 万/h
+  若接受 --no-timing：约 255 万/h（+9%）
+
+未排查的选项：
+  - --output-split-cfuncs：拆分编译单元，可能改善 g++ 优化
+  - Verilator runtime 参数调优（如 --prof-cfuncs）
+  - 降低 testbench 中 $display 的调用频率（当前每 10000 条打印一次）
+  - 使用 LTO（-flto）链接时优化
+
+== 正确启动指令与前置配置（已验证） ==
+
+前置配置（一次性）：
+  1. DTS 修复（platform/dts/open-c906-smart-run.dts）：
+     - PLIC: compatible = "thead,c900-plic"
+     - CLINT: compatible = "thead,c900-clint"
+  2. 重建 DTB 和 OpenSBI 固件（内嵌 DTB 需逐字节一致）：
+     make dtb
+     make opensbi
+  3. 构建 Verilator 模型（推荐 FAST_UART=0，实测比 FAST_UART=1 快约 10%）：
+     LINUXCPU_FAST_UART=0 LINUXCPU_JOBS=8 make rtl-linux
+  4. 验证：
+     make smoke-clint
+     make doctor
+
+启动长跑（关键：必须绑核）：
+  1. 启动仿真（后台）：
+     LINUXCPU_FAST_UART=0 LINUXCPU_LINUX_SIM_TIMEOUT=0 make run
+  2. 找到仿真进程 PID：
+     pgrep -n -f 'output/verilator/c906-linux'
+  3. 绑定到空闲 P 核（选 sibling 空闲的核，如 CPU 9）：
+     taskset -pc 9 <PID>
+  4. 观察进度：
+     tail -f output/logs/c906-linux-verilator.log
+     grep 'THR write' output/logs/c906-linux-verilator.log | wc -l  # 串口字符数
+     grep 'timer-diag' output/logs/c906-linux-verilator.log | tail  # timer 状态
+  5. 成功标志：
+     grep 'linuxCPU: reached minimal RISC-V userspace' output/logs/c906-linux-verilator.log
+     grep 'linuxCPU: PID 1 is alive' output/logs/c906-linux-verilator.log
+
+注意：
+  - 绑核必须在仿真启动后尽快执行，越早越好
+  - 若仿真已跑很久未绑核，在线绑核仍有效（已验证），无需重启
+  - 不要用 LINUXCPU_LINUX_SIM_TIMEOUT 设非 0 值，否则宿主超时会误杀仿真
+  - 当前速度约 234 万 retired/h，到 stall 点（32.6M）约需 14 小时
+
+== tty/pty 设备注册风暴与 tick 开销问题（2026-08-20，经 GPT 交叉核验修订） ==
+
+现象：笔记本长跑（timer 已修复）越过 3717 字符（riscv-plic mapped 行尾）后
+长时间无新串口输出。
+
+关键数据（已逐条核实）：
+  历史 run（timer 坏，无 tick）：
+    #3717 retired=12,594,538（plic 行尾）
+    #3718 retired=31,519,811（"Serial: 8250" 行首）
+    #4258 retired=32,601,666（bootconsole disabled）
+    => 历史 run 在 3717 之后同样有 18.9M 的静默期（设备注册），
+       不是异常，是这个内核配置的固有阶段。
+  当前 run（timer 好）：
+    #3717 retired=24,476,374
+    => 到同一字符，当前 run 用了历史的 1.94 倍指令（tick 稀释所致）。
+  勘误：本记录初版声称"历史 run 从 3717 到 4258 只用 1.1M，差距 24 倍"，
+  是错误的。1.08M 是 #3718 到 #4258 的距离；#3717 的位置当时未查证。
+
+排查方法：把 25M 以后的 linux-diag PC 采样（每 10K retired 一个点）分窗口
+做 addr2line 符号化，统计函数分布和累计新增唯一函数数。
+
+排查结论：
+  1. 不是死循环：各窗口持续有新函数出现（bus_probe_device、
+     tty_register_device），新增唯一函数数总体下降但不严格单调（约 137 降到二三十，
+     具体数字依赖窗口划分和过滤规则，只作定性证据）。
+  2. 工作内容：tty_register_device / devtmpfs_work_loop / vfs_mknod /
+     kobject_uevent_env / kernfs_* —— 正在静默注册大量 tty 设备。
+  3. 根因一（设备数量）：.config 中 CONFIG_VT=y（63 个虚拟终端）+
+     两个 legacy pty driver 各 256 个（共 512），合计约 575 个无用 tty 设备，
+     每个走完整 device_add + sysfs + devtmpfs + uevent 流程。
+     本平台只需要 ttyS0。历史 run 同样有此阶段（8M-31.5M 采样中设备注册
+     相关函数占 12-24%），因其静默且当时无 tick 稀释，未被注意。
+  4. 根因二（tick 开销稀释）：mtime 取 tr_axi_interconnect.v 的
+     pad_cpu_sys_cnt（每 CPU 周期 +1），DTS timebase=100MHz，HZ=250
+     => 每 4ms tick = 400K 周期。稳定区间实测平均约 6,449 retired/tick。
+     每次 tick 含 2 次 SBI ecall（stop + 重编程）+ tick_periodic + 调度器。
+     由"到 3717 字符用时 1.94 倍"反推，tick 稀释约吃掉一半 retire 吞吐
+     （精确占比未直接测量，PC 采样无法把 memcpy/slab 等通用函数归因）。
+
+进度推算（修订后）：
+  历史静默期 18.9M x 稀释系数 1.94 ≈ 36.7M
+  => 预计当前 run 在 retired ≈ 24.5M + 36.7M ≈ 61M 附近打印 "Serial: 8250"
+  （2026-08-20 17:06 远端 52.67M，按 90 万/h 估约 9 小时后到达）
+
+最终结果（2026-08-24 确认）：
+  笔记本长跑（旧配置 VT=y/LEGACY_PTYS=y/HZ=250）在 2026-08-18 09:28 启动，
+  2026-08-23 10:39 因 testbench 最大仿真时间限制（meeting max simulation time）终止，
+  总 retired=110.52M，UART 输出 4663 个字符。
+  关键里程碑：
+    #3718 retired=93,641,875  "Serial: 8250/16550 driver" 打印
+    #4258 retired=97,465,987  bootconsole 切换到 ttyS0
+    #4663 retired=107,288,831 "Run /init as init process" + PID 1 alive
+  串口完整输出（#3718-#4663）：
+    [   54.704897] Serial: 8250/16550 driver, 4 ports, IRQ sharing disabled
+    [   55.973051] of_serial 10015000.serial: error -6: IRQ index 0 not found
+    [   56.568029] printk: legacy console [ttyS0] disabled
+    [   56.985027] 10015000.serial: ttyS0 at MMIO 0x10015000 (irq = 0, base_baud = 6250000) is a 16550A
+    [   57.051904] printk: legacy console [ttyS0] enabled
+    [   57.104610] printk: legacy bootconsole [uart8250] disabled
+    [   57.785989] cpu0: scalar unaligned word access speed is 5.48x byte access speed (fast)
+    [   62.360686] clk: Disabling unused clocks
+    [   62.724835] Freeing unused kernel image (initmem) memory: 204K
+    [   62.764580] Kernel memory protection not selected by kernel config.
+    [   62.804984] Run /init as init process
+    linuxCPU: reached minimal RISC-V userspace
+    linuxCPU: PID 1 is alive on OpenC906 RTL
+  结论：Linux 内核在 OpenC906 RTL 仿真上完整启动成功，init 进程（PID 1）已执行。
+
+优化方案评估（2026-08-20 实施，2026-08-24 已回退）：
+  a. 关 CONFIG_VT / CONFIG_LEGACY_PTYS（保留 UNIX98_PTYS + ttyS0）：
+     消灭约 575 个设备注册。代价：内核重编。
+  b. 将 CONFIG_HZ 250 -> 100：周期 tick 数降为 40%。代价：内核重编。
+  本机静态验证通过（make doctor 24 passed），但因笔记本旧配置已先跑到 PID 1，
+  优化方案不再必要，已于 2026-08-24 从远端同步回已验证的旧配置产物，回退所有改动。
+  勘误：初版曾提出"mtime 分频 /64 + 同步改 DTS timebase"方案，经核验无效：
+  timebase 和分频同步改动后，tick 周期折算回 CPU 周期不变
+  （1.5625MHz/250 x 64 = 400K 周期）。只分频不改 DTS 则时间语义错 64 倍。
+  已删除该方案。
+
+关联问题（未解决）：全程平均约 45-60 周期/条 retired（含 WFI 空转与
+M-mode），OpenSBI 早期无 idle 阶段更高，疑似访存延迟或 icache 问题，
+需单独排查 tb 的 AXI/内存模型延迟。

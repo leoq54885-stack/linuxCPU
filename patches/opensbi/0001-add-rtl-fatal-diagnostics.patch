@@ -1,0 +1,43 @@
+diff --git a/lib/sbi/sbi_hart.c b/lib/sbi/sbi_hart.c
+--- a/lib/sbi/sbi_hart.c
++++ b/lib/sbi/sbi_hart.c
+@@ -734,8 +734,13 @@ int sbi_hart_init(struct sbi_scratch *scratch, bool cold_boot)
+ 	return sbi_hart_reinit(scratch);
+ }
+ 
++/* Testbench-only fatal diagnostics; normal boot never writes this address. */
++#define LINUXCPU_HANG_RA_ADDR 0x007ff080UL
++
+ void __attribute__((noreturn)) sbi_hart_hang(void)
+ {
++	*(volatile unsigned long *)LINUXCPU_HANG_RA_ADDR =
++		(unsigned long)__builtin_return_address(0);
+ 	while (1)
+ 		wfi();
+ 	__builtin_unreachable();
+diff --git a/lib/sbi/sbi_trap.c b/lib/sbi/sbi_trap.c
+--- a/lib/sbi/sbi_trap.c
++++ b/lib/sbi/sbi_trap.c
+@@ -79,8 +79,22 @@ static void __noreturn sbi_trap_error(const char *msg, int rc,
+ 				      const struct sbi_trap_context *tcntx)
+ {
+ 	u32 depth = 0, hartid = current_hartid();
++	volatile unsigned long *linuxcpu_diag =
++		(volatile unsigned long *)0x007ff000UL;
+ 	const struct sbi_trap_context *tc;
+ 
++	/* Preserve fatal trap details for the RTL testbench, before console init. */
++	linuxcpu_diag[0] = (unsigned long)rc;
++	linuxcpu_diag[1] = tcntx->trap.cause;
++	linuxcpu_diag[2] = tcntx->trap.tval;
++	linuxcpu_diag[3] = tcntx->trap.tval2;
++	linuxcpu_diag[4] = tcntx->trap.tinst;
++	linuxcpu_diag[5] = tcntx->regs.mepc;
++	linuxcpu_diag[6] = tcntx->regs.mstatus;
++	linuxcpu_diag[7] = tcntx->regs.ra;
++	linuxcpu_diag[8] = tcntx->regs.sp;
++	linuxcpu_diag[9] = 0x4c696e7578433930UL;
++
+ 	for (tc = tcntx; tc; tc = tc->prev_context)
+ 		depth++;
+ 

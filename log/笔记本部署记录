@@ -1,0 +1,171 @@
+== 笔记本部署记录 (2026-08-18 更新) ==
+
+== 硬件 ==
+设备: HP 笔记本，11 代 i5，8 核
+系统: Windows + WSL2 Ubuntu 22.04.4 LTS
+内核: 5.10.16.3-microsoft-standard-WSL2
+GLIBC: 2.35
+远程访问: Windows 远程桌面（非 SSH，因不在同一网络）
+
+== 路径 ==
+项目根目录: /root/linuxCPU
+模型二进制: /root/linuxCPU/output/verilator/c906-linux
+固件: /root/linuxCPU/output/opensbi-c906/platform/generic/firmware/fw_payload.bin
+RAM lane 文件: /root/linuxCPU/output/sim/ram00.bin ~ ram31.bin
+testbench: /root/linuxCPU/output/sim/tb-linux.v
+filelist: /root/linuxCPU/output/sim/tb-linux.fl
+日志: /root/linuxCPU/output/logs/c906-linux-verilator.log
+Verilator: /usr/local/bin/verilator (v5.020，源码编译)
+
+== 依赖版本 ==
+- Verilator: 5.020 (源码编译安装，apt 版 4.038 太旧不支持 --binary)
+- Python3: 3.10.12
+- make: 4.3
+- gcc/g++: 11.x (系统自带)
+- git: 2.34.1
+- 未安装: riscv64-linux-gnu-nm (验证固件 DTB 用，非必需)
+- 未安装: riscv64-unknown-elf-gcc (smoke test 用，非必需)
+
+== 已部署文件 (来自 linuxCPU-rtl-src.tar.gz) ==
+- openc906/ 完整源码 (用于编译 Verilator 模型)
+- output/opensbi-c906/.../fw_payload.bin + .elf (预编译固件)
+- output/linux/arch/riscv/boot/Image (预编译内核)
+- output/dts/open-c906-smart-run.dtb (预编译 DTB)
+- scripts/ (全部脚本)
+- Makefile, env.sh, versions.lock, configs/, platform/, patches/
+
+== 缺失文件 (打包时遗漏) ==
+- build.sh (Makefile 调用，需手动绕过)
+- run.sh (Makefile 调用，需手动绕过)
+- setup.sh (env.sh 中引用，非必需)
+
+== 启动命令 (绕过缺失的 build.sh / run.sh) ==
+编译模型:
+  cd ~/linuxCPU
+  source env.sh
+  export SMART=~/linuxCPU/openc906/smart_run
+  cd openc906/smart_run/work
+  /usr/local/bin/verilator --binary --top-module tb \
+    --Mdir ~/linuxCPU/output/verilator/obj \
+    -o ~/linuxCPU/output/verilator/c906-linux \
+    --build-jobs 8 -O3 -CFLAGS -O3 --x-initial 0 --x-assign 0 \
+    -Wno-fatal -Wno-BLKANDNBLK -Wno-TIMESCALEMOD -Wno-WIDTH \
+    -Wno-MULTIDRIVEN -Wno-UNOPTFLAT -Wno-IMPLICIT -Wno-UNSIGNED \
+    -Wno-CMPCONST -Wno-CASEINCOMPLETE \
+    -Diverilog=1 -DIVERILOG_SIM -DNO_DUMP \
+    -f $CODE_BASE_PATH/gen_rtl/filelists/C906_asic_rtl.fl \
+    -f $CODE_BASE_PATH/gen_rtl/filelists/tdt_dmi_top_rtl.fl \
+    -f $SMART/logical/filelists/smart.fl \
+    -f ~/linuxCPU/output/sim/tb-linux.fl
+
+启动仿真:
+  cd ~/linuxCPU
+  source env.sh
+  LINUXCPU_LINUX_SIM_TIMEOUT=0 python3 scripts/run-verilator-linux.py \
+    --model /root/linuxCPU/output/verilator/c906-linux \
+    --cwd /root/linuxCPU/output/sim \
+    --log /root/linuxCPU/output/logs/c906-linux-verilator.log \
+    --timeout 0 &
+  sleep 2
+  taskset -pc 2 $(pgrep -n -f c906-linux)
+
+观察:
+  tail -f output/logs/c906-linux-verilator.log
+  grep 'linuxCPU:' output/logs/c906-linux-verilator.log
+  grep 'linux-diag.*retired=' output/logs/c906-linux-verilator.log | tail -1
+
+== 踩过的坑 ==
+
+1. GLIBC 版本不兼容
+   现象: 从主机直接拷贝的 c906-linux 二进制报 GLIBC_2.38 not found
+   原因: 主机 WSL glibc 2.38+，笔记本 Ubuntu 22.04 只有 2.35
+   解决: 在笔记本上用源码重新编译 Verilator 模型
+
+2. Verilator 版本太旧
+   现象: apt 安装的 verilator 4.038 不支持 --binary 选项
+   解决: 从源码编译 verilator v5.020，安装到 /usr/local/bin/
+   注意: 安装后必须 hash -r 刷新 bash 缓存，或卸载旧版 apt verilator
+
+3. PATH wrapper 脚本拦截
+   现象: source env.sh 后 verilator 命令报 "verilator is unavailable; run setup.sh"
+   原因: env.sh 将 scripts/toolchain-bin 加入 PATH，其中的 verilator wrapper
+         只找 /usr/bin/verilator 和 .toolchain/verilator/，不找 /usr/local/bin/
+   解决: 卸载 apt 版 verilator 后，wrapper 仍会拦截。用 /usr/local/bin/verilator
+         绝对路径绕过，或直接修改 wrapper 脚本
+
+4. filelist 路径硬编码
+   现象: tb-linux.fl 中的路径是主机的 /home/saya2/cy/tmp/linuxCPU/...
+   解决: sed -i 's|/home/saya2/cy/tmp/linuxCPU|/root/linuxCPU|g' output/sim/tb-linux.fl
+
+5. CODE_BASE_PATH 未设置
+   现象: filelist 中的 {CODE_BASE_PATH} 变量未展开
+   解决: source env.sh 设置环境变量
+
+6. build.sh / run.sh 缺失
+   现象: make rtl-linux 和 make run 报 No such file or directory
+   原因: 打包时遗漏了 build.sh 和 run.sh
+   解决: 直接调用 scripts/ 下的脚本绕过
+
+7. 模型路径必须用绝对路径
+   现象: stdbuf: failed to run command 'output/verilator/c906-linux': No such file
+   原因: python 脚本用相对路径传给 stdbuf，但 cwd 已切换
+   解决: --model 参数用绝对路径 /root/linuxCPU/output/verilator/c906-linux
+
+== 第一次运行 (2026-08-17 20:09 ~ 2026-08-18 09:19) 失败 ==
+原因: 手动编译时跳过了 build-verilator-linux.sh 中的 git apply 步骤
+      UART patch (0001-mark-smart-run-uart-device.patch) 未应用
+      sysmap.h SYSMAP_BASE_ADDR0 仍为原始值 28'h8ffff
+      导致 UART MMIO 地址未被标记为 strong-order，C906 发出 cache-line 事务
+      UART 寄存器未正确配置 (divisor=0000 lcr=00 thre=0)
+      内核卡在 UART LSR 轮询循环
+现象: retired 到 13.55M (13 小时)，仅 4 个 THR write，无 timer-diag，无串口输出
+教训: 手动编译必须先应用 patch，不能跳过 build-verilator-linux.sh 的前置步骤
+
+== 运行状态 (2026-08-18 09:28 启动，2026-08-23 10:39 终止) ==
+状态: 已完成，成功到达 PID 1
+配置: LINUXCPU_FAST_UART=0, LINUXCPU_LINUX_SIM_TIMEOUT=0
+绑核: CPU 2 (PID 7173)
+模型: 本地编译，Verilator 5.020，UART patch 已应用
+速度: 约 93.5 万 retired/h (i5 单核)
+总 retired: 110.52M
+UART 输出: 4663 个字符
+终止原因: testbench 最大仿真时间限制 (meeting max simulation time)，非崩溃
+
+关键里程碑:
+  #3717 retired=24,476,374  plic mapped 行尾
+  #3718 retired=93,641,875  "Serial: 8250/16550 driver" 打印
+  #4258 retired=97,465,987  ttyS0 注册 + bootconsole 切换
+  #4663 retired=107,288,831 "Run /init as init process"
+  最终输出: "linuxCPU: PID 1 is alive on OpenC906 RTL"
+
+串口完整输出 (#3718-#4663):
+  [   54.704897] Serial: 8250/16550 driver, 4 ports, IRQ sharing disabled
+  [   55.973051] of_serial 10015000.serial: error -6: IRQ index 0 not found
+  [   56.568029] printk: legacy console [ttyS0] disabled
+  [   56.985027] 10015000.serial: ttyS0 at MMIO 0x10015000 (irq = 0, base_baud = 6250000) is a 16550A
+  [   57.051904] printk: legacy console [ttyS0] enabled
+  [   57.104610] printk: legacy bootconsole [uart8250] disabled
+  [   57.785989] cpu0: scalar unaligned word access speed is 5.48x byte access speed (fast)
+  [   62.360686] clk: Disabling unused clocks
+  [   62.724835] Freeing unused kernel image (initmem) memory: 204K
+  [   62.764580] Kernel memory protection not selected by kernel config.
+  [   62.804984] Run /init as init process
+  linuxCPU: reached minimal RISC-V userspace
+  linuxCPU: PID 1 is alive on OpenC906 RTL
+
+== 编译前必须应用的 patch ==
+cd /root/linuxCPU/openc906
+git config --global --add safe.directory /root/linuxCPU/openc906
+git apply /root/linuxCPU/patches/openc906/0001-mark-smart-run-uart-device.patch
+验证: grep SYSMAP_BASE_ADDR0 C906_RTL_FACTORY/gen_rtl/mmu/rtl/sysmap.h
+      应输出 28'h10015 (不是 28'h8ffff)
+
+== 下次重新部署检查清单 ==
+1. 确认 /usr/local/bin/verilator --version 输出 5.020
+2. 确认 output/sim/tb-linux.fl 路径为 /root/linuxCPU/...
+3. source env.sh 后确认 echo $CODE_BASE_PATH 输出 /root/linuxCPU/openc906/C906_RTL_FACTORY
+4. 确认 output/sim/ram*.bin 存在 (32 个文件)
+5. 确认 output/opensbi-c906/.../fw_payload.bin 存在
+6. 确认 UART patch 已应用: grep SYSMAP_BASE_ADDR0 .../sysmap.h 输出 28'h10015
+7. 确认 DTS compatible: thead,c900-plic 和 thead,c900-clint
+8. 确认 DTB 内嵌了正确的 compatible strings

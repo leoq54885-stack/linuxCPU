@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+LOCAL="$ROOT/.toolchain/iverilog"
+
+if [[ -x "$LOCAL/usr/bin/vvp" ]]; then
+    exec "$LOCAL/usr/bin/vvp" \
+        -M "$LOCAL/usr/lib/x86_64-linux-gnu/ivl" "$@"
+fi
+if [[ -x /usr/bin/vvp ]]; then
+    exec /usr/bin/vvp "$@"
+fi
+printf 'vvp is unavailable; run %s/setup.sh\n' "$ROOT" >&2
+exit 127
