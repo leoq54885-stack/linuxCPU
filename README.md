@@ -129,17 +129,3 @@ RTL 首次启动时间；BusyBox shell 可作为通过该里程碑后的下一�
 和极简 initramfs 是否能执行到同一个 PID 1 标记。它只验证软件栈，不执行
 OpenC906 RTL，也不作为本项目的 RTL 验收证据。
 
-## 可推送与存储边界
-
-`setup.sh` 按 [versions.lock](versions.lock) 拉取固定 commit，并把固定版本的
-Icarus、Verilator、下载缓存、上游源码和全部产物都放在本目录内。只有主机
-缺失的软件包可能由 apt 安装到系统。工程不读取或修改相邻的 `RtosCPU`。
-
-应提交的是配置、补丁、DTS、rootfs 源码和脚本；以下大体积内容已忽略，别人
-拉取后由 `setup.sh`/`make build` 重建：
-
-- `.cache/`、`.toolchain/`、`output/`
-- `openc906/`、`opensbi/`、`linux/`、`buildroot/`
-
-顶层 Git 仓库只保存可复现输入和最终验收记录；上游 checkout 在构建前后都应
-保持干净，任何适配都必须回存为顶层配置、脚本或 `patches/` 下的补丁。

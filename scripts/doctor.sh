@@ -58,13 +58,15 @@ for command_name in make python3 timeout dtc riscv64-linux-gnu-gcc \
     check_command "$command_name"
 done
 
-if iverilog -V 2>&1 | grep -q 'version 12\.0'; then
+iverilog_ver="$(iverilog -V 2>&1 || true)"
+if printf '%s' "$iverilog_ver" | grep -q 'version 12\.0'; then
     ok "Icarus Verilog version 12.0"
 else
     bad "Icarus Verilog is not the pinned 12.0 release"
 fi
 
-if verilator --version 2>&1 | grep -q 'Verilator 5\.020'; then
+verilator_ver="$(verilator --version 2>&1 || true)"
+if printf '%s' "$verilator_ver" | grep -q 'Verilator 5\.020'; then
     ok "Verilator version 5.020"
 else
     bad "Verilator is not the pinned 5.020 release"
