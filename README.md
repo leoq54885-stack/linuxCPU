@@ -21,6 +21,8 @@ make run
 - `make smoke`：用 Icarus/VVP 运行 OpenC906 官方 MMU RTL 用例。
 - `make smoke-clint`：在 Verilator 模型中对比 CLINT 的错误 64 位写与正确 32 位
   `mtimecmp` 更新序列。
+- `make perf-smoke`：固定墙钟时间运行 RTL 启动探针，保存 retired/s、线程、迁核
+  等 JSON 指标，不等待完整 Linux 启动。
 - `make build`：构建极简 `/init`、Linux、OpenSBI、DTB，并编译 Verilator RTL 模型。
 - `make run`：运行 OpenC906 RTL，检测到 PID 1 验收标记后自动成功退出。
 - `make rtl-linux-iverilog`、`make run-iverilog`：同一镜像的慢速 Icarus 路径。
@@ -59,6 +61,17 @@ Verilator 长跑必须绑核到空闲 P 核，否则进程在逻辑核间漂移�
 ```bash
 PID=$(pgrep -n -f 'output/verilator/c906-linux')
 taskset -pc 9 $PID    # 选一个空闲 P 核
+```
+
+性能实验、多线程模型构建和已确认的负扩展原因见
+[Verilator 仿真性能冒烟与多核排查](docs/simulation-performance.md)。实验确认
+Verilator 5.050 单线程约为 5.020 的 2.97 倍；但 5.050 的 t2/t4 仍然负扩展，
+普通主机多线程路线已止损。当前锁定工具链仍保持不变，5.050 候选模型通过
+`LINUXCPU_VERILATOR_BIN` 和 `LINUXCPU_VERILATOR_VARIANT` 旁路选择。
+`LINUXCPU_VERILATOR_THREADS=N` 可生成并存的 tN 实验模型。固定时长冒烟示例：
+
+```bash
+LINUXCPU_PERF_SMOKE_SECONDS=120 LINUXCPU_PERF_CPUS=9 make perf-smoke
 ```
 
 已验证的里程碑（HZ=250 旧配置，i5-1135G7 单核约 93.5 万 retired/h）：
@@ -128,4 +141,3 @@ RTL 首次启动时间；BusyBox shell 可作为通过该里程碑后的下一�
 `QEMUtest/run-qemu.sh` 可以在 QEMU `virt` 机器上快速检查 Linux Image、OpenSBI
 和极简 initramfs 是否能执行到同一个 PID 1 标记。它只验证软件栈，不执行
 OpenC906 RTL，也不作为本项目的 RTL 验收证据。
-

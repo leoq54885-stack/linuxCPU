@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help setup doctor smoke smoke-rebuild smoke-clint dts linux firmware rtl-linux rtl-linux-iverilog build run run-iverilog status
+.PHONY: help setup doctor smoke smoke-rebuild smoke-clint perf-smoke dts linux firmware rtl-linux rtl-linux-iverilog build run run-iverilog status
 
 help:
 	@echo "linuxCPU targets:"
@@ -9,6 +9,7 @@ help:
 	@echo "  make smoke          Run the OpenC906 MMU RTL baseline"
 	@echo "  make smoke-rebuild  Re-elaborate RTL, then run baseline"
 	@echo "  make smoke-clint    Verify C906's 32-bit CLINT mtimecmp path"
+	@echo "  make perf-smoke     Run a bounded RTL boot-speed probe and save JSON metrics"
 	@echo "  make dts            Compile and round-trip check the smart_run DTS"
 	@echo "  make linux          Build minimal kernel with embedded PID 1"
 	@echo "  make firmware       Build OpenSBI + Linux + embedded DTB"
@@ -31,6 +32,9 @@ smoke-rebuild:
 
 smoke-clint:
 	@./scripts/smoke-clint-mtimecmp.sh
+
+perf-smoke:
+	@./scripts/smoke-verilator-performance.sh
 
 dts:
 	@./scripts/build-dtb.sh

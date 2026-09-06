@@ -16,6 +16,7 @@ SUCCESS = b"linuxCPU: PID 1 is alive on OpenC906 RTL"
 UART_THR_WRITE = re.compile(
     rb"\[uart-diag\] THR write #[0-9]+ .*?\bdata=([0-9a-fA-F]{2})\b"
 )
+RETIRED_PROGRESS = re.compile(rb"\[linux-diag\] retired=([0-9]+)\b")
 
 
 def extract_uart_bytes(buffer: bytes, chunk: bytes) -> tuple[bytes, bytes]:
@@ -30,6 +31,18 @@ def extract_uart_bytes(buffer: bytes, chunk: bytes) -> tuple[bytes, bytes]:
     return trailing[-4096:], bytes(uart)
 
 
+def extract_retired(buffer: bytes, chunk: bytes) -> tuple[bytes, list[int]]:
+    """Return retirement counters from complete output lines."""
+    lines = (buffer + chunk).split(b"\n")
+    trailing = lines.pop()
+    values = []
+    for line in lines:
+        match = RETIRED_PROGRESS.search(line)
+        if match:
+            values.append(int(match.group(1)))
+    return trailing[-4096:], values
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True, type=Path)
@@ -39,6 +52,9 @@ def main() -> int:
     args = parser.parse_args()
     if args.timeout < 0:
         parser.error("--timeout must be >= 0 (0 disables the host-side timeout)")
+    args.model = args.model.resolve()
+    args.cwd = args.cwd.resolve()
+    args.log = args.log.resolve()
 
     args.log.parent.mkdir(parents=True, exist_ok=True)
     deadline = None if args.timeout == 0 else time.monotonic() + args.timeout
@@ -54,10 +70,13 @@ def main() -> int:
         bufsize=0,
     )
     assert proc.stdout is not None
+    started = time.monotonic()
     try:
         recent = b""
         uart_recent = b""
         line_buffer = b""
+        progress_buffer = b""
+        last_progress: tuple[float, int] | None = None
         with args.log.open("wb") as log:
             while deadline is None or time.monotonic() < deadline:
                 wait_seconds = 1.0
@@ -81,7 +100,30 @@ def main() -> int:
                 sys.stdout.buffer.flush()
                 recent = (recent + chunk)[-2 * len(SUCCESS) :]
                 line_buffer, uart = extract_uart_bytes(line_buffer, chunk)
+                progress_buffer, retired_values = extract_retired(
+                    progress_buffer, chunk
+                )
                 uart_recent = (uart_recent + uart)[-2 * len(SUCCESS) :]
+                now = time.monotonic()
+                for retired in retired_values:
+                    if retired < 10_000:
+                        continue
+                    total_seconds = now - started
+                    overall_rate = retired / total_seconds
+                    window_text = "n/a"
+                    if last_progress is not None and now > last_progress[0]:
+                        window_rate = (retired - last_progress[1]) / (
+                            now - last_progress[0]
+                        )
+                        window_text = f"{window_rate:.1f}"
+                    print(
+                        f"[rtl-speed] retired={retired} elapsed={total_seconds:.1f}s "
+                        f"window_retired/s={window_text} "
+                        f"overall_retired/s={overall_rate:.1f}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    last_progress = (now, retired)
                 if SUCCESS in recent or SUCCESS in uart_recent:
                     found = True
                     break
