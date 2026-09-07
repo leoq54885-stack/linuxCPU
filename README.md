@@ -120,6 +120,10 @@ Linux testbench overlay 会把上游面向短裸机用例的 50,000-cycle 无退
 
 ## 启动链和验收
 
+本分支的 Linux 构建默认使用 `LINUXCPU_LINUX_PROFILE=trim`，关闭 VT 和
+legacy PTY，保留串口与 UNIX98 PTY。`baseline` 可恢复原配置配方。
+独立构建路径、短测结果和加速预估见[第一轮 Linux 精简](experiments/linux-trim-20260907.md)。
+
 ```text
 OpenC906 reset @ 0x0
   -> OpenSBI（M-mode）

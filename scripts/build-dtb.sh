@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOURCE="$ROOT/platform/dts/open-c906-smart-run.dts"
-OUTPUT_DIR="$ROOT/output/dts"
+OUTPUT_DIR="${LINUXCPU_DTS_OUTPUT:-$ROOT/output/dts}"
 OUTPUT="$OUTPUT_DIR/open-c906-smart-run.dtb"
 ROUNDTRIP="$OUTPUT_DIR/open-c906-smart-run.roundtrip.dts"
 

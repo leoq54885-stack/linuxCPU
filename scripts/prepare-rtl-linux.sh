@@ -14,9 +14,9 @@ if [[ "$DIAG_TEST" != none && -z "${LINUXCPU_OPENSBI_OUTPUT:-}" ]]; then
     OPENSBI_OUTPUT="$ROOT/output/opensbi-diag-test-$CACHE_MODE-$DIAG_TEST"
 fi
 FIRMWARE="$OPENSBI_OUTPUT/platform/generic/firmware/fw_payload.bin"
-LINUX_IMAGE="$ROOT/output/linux/arch/riscv/boot/Image"
+LINUX_IMAGE="${LINUXCPU_LINUX_OUTPUT:-$ROOT/output/linux}/arch/riscv/boot/Image"
 DT_SOURCE="$ROOT/platform/dts/open-c906-smart-run.dts"
-DTB="$ROOT/output/dts/open-c906-smart-run.dtb"
+DTB="${LINUXCPU_DTS_OUTPUT:-$ROOT/output/dts}/open-c906-smart-run.dtb"
 
 firmware_stale=0
 if [[ ! -f "$FIRMWARE" || ! -f "$OPENSBI_OUTPUT/cache-mode" || ! -f "$OPENSBI_OUTPUT/diag-test" ]]; then

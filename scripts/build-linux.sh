@@ -5,8 +5,22 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/env.sh"
 
 LINUX_SOURCE="$ROOT/linux"
-LINUX_OUTPUT="$ROOT/output/linux"
-ROOTFS_OUTPUT="$ROOT/output/rootfs"
+LINUX_OUTPUT="${LINUXCPU_LINUX_OUTPUT:-$ROOT/output/linux}"
+ROOTFS_OUTPUT="${LINUXCPU_ROOTFS_OUTPUT:-$ROOT/output/rootfs}"
+PROFILE="${LINUXCPU_LINUX_PROFILE:-trim}"
+if [[ "$PROFILE" != baseline && "$PROFILE" != trim ]]; then
+    echo 'LINUXCPU_LINUX_PROFILE must be baseline or trim' >&2
+    exit 2
+fi
+CONFIG_ONLY=0
+if [[ "${1:-}" == --config-only ]]; then
+    CONFIG_ONLY=1
+    shift
+fi
+if (($#)); then
+    echo 'Usage: build-linux.sh [--config-only]' >&2
+    exit 2
+fi
 INIT_BINARY="$ROOTFS_OUTPUT/init"
 INITRAMFS_LIST="$ROOTFS_OUTPUT/initramfs.list"
 JOBS="${LINUXCPU_JOBS:-$(nproc)}"
@@ -46,6 +60,11 @@ for symbol in SMP MODULES PCI NET WERROR ERRATA_THEAD_CMO; do
     "$config" "${config_args[@]}" --disable "$symbol"
 done
 
+if [[ "$PROFILE" == trim ]]; then
+    # The board has a serial console; avoid eager creation of unused TTYs.
+    "$config" "${config_args[@]}" --disable VT --disable LEGACY_PTYS --enable UNIX98_PTYS
+fi
+
 "$config" "${config_args[@]}" --set-str INITRAMFS_SOURCE "$INITRAMFS_LIST"
 "$config" "${config_args[@]}" --set-str CMDLINE \
     "earlycon=uart8250,mmio32,0x10015000 console=ttyS0,115200 rdinit=/init"
@@ -60,6 +79,19 @@ for required in CONFIG_ERRATA_THEAD=y CONFIG_ERRATA_THEAD_MAE=y; do
         exit 1
     }
 done
+
+if [[ "$PROFILE" == trim ]]; then
+    for required in '# CONFIG_VT is not set' '# CONFIG_LEGACY_PTYS is not set' \
+        CONFIG_UNIX98_PTYS=y CONFIG_TTY=y CONFIG_SERIAL_8250_CONSOLE=y \
+        CONFIG_SERIAL_OF_PLATFORM=y; do
+        grep -qx "$required" "$LINUX_OUTPUT/.config" || {
+            printf '[linux] trim configuration check failed: %s\n' "$required" >&2
+            exit 1
+        }
+    done
+fi
+printf '[linux] profile=%s config=%s\n' "$PROFILE" "$LINUX_OUTPUT/.config"
+((CONFIG_ONLY == 0)) || exit 0
 
 printf '[linux] compiling Image with %s jobs\n' "$JOBS"
 make -C "$LINUX_SOURCE" O="$LINUX_OUTPUT" ARCH=riscv \
