@@ -20,7 +20,7 @@ import time
 
 
 RETIRED = re.compile(rb"\[linux-diag\] retired=([0-9]+)\b")
-FAILURE = re.compile(rb"(?:%Error|\* Error:|\[linux-diag\] stalled after)")
+FAILURE = re.compile(rb"(?:%Error|%Fatal|\* Error:|\[linux-diag\] stalled after|\[fatal-diag\] complete kind=)")
 SCHED_FIELDS = {
     "nr_switches": "context_switches",
     "nr_voluntary_switches": "voluntary_switches",
@@ -134,6 +134,7 @@ def main() -> int:
     parser.add_argument("--warmup", type=float, default=10.0)
     parser.add_argument("--cpus", help="Linux CPU list, for example 2 or 2,4-6")
     parser.add_argument("--min-retired", type=int, default=10_000)
+    parser.add_argument("--firmware", type=Path, help="Firmware used to generate the RAM files")
     args = parser.parse_args()
     if args.duration <= 0 or args.warmup < 0 or args.warmup >= args.duration:
         parser.error("require duration > warmup >= 0")
@@ -170,6 +171,7 @@ def main() -> int:
     )
     assert proc.stdout is not None
     samples: list[tuple[float, int]] = []
+    cycle_samples: list[tuple[float, int, int, str]] = []
     failure_lines: list[str] = []
     observed_cpus: set[int] = set()
     peak_threads = 0
@@ -201,6 +203,10 @@ def main() -> int:
                     match = RETIRED.search(line)
                     if match:
                         samples.append((now - start, int(match.group(1))))
+                        state = re.search(rb"cycles=([0-9]+) mhcr=(0x[0-9a-fA-F]+)", line)
+                        if state:
+                            cycle_samples.append((now - start, int(match.group(1)),
+                                                  int(state.group(1)), state.group(2).decode()))
                     if FAILURE.search(line) and len(failure_lines) < 10:
                         failure_lines.append(line.decode("utf-8", errors="replace"))
         finally:
@@ -219,7 +225,13 @@ def main() -> int:
     max_retired = max((value for _, value in samples), default=0)
     project_root = Path(__file__).resolve().parent.parent
     build_info_path = args.model.with_name(args.model.name + ".build-info")
-    firmware_path = project_root / "output/opensbi-c906/platform/generic/firmware/fw_payload.bin"
+    firmware_path = args.firmware or project_root / "output/opensbi-c906/platform/generic/firmware/fw_payload.bin"
+    stable_cycles = [sample for sample in cycle_samples if sample[0] >= args.warmup]
+    cycles_per_second = cpi = None
+    if len(stable_cycles) >= 2:
+        first, last = stable_cycles[0], stable_cycles[-1]
+        cycles_per_second = (last[2] - first[2]) / (last[0] - first[0])
+        cpi = (last[2] - first[2]) / (last[1] - first[1])
     cpu_model = None
     try:
         cpu_model = next(
@@ -230,7 +242,7 @@ def main() -> int:
     except (FileNotFoundError, StopIteration, IndexError):
         pass
     summary = {
-        "schema_version": 2,
+        "schema_version": 3,
         "started_at_utc": started_at,
         "label": args.label,
         "model": str(args.model.resolve()),
@@ -241,6 +253,10 @@ def main() -> int:
         if build_info_path.is_file()
         else None,
         "firmware_sha256": sha256_file(firmware_path),
+        "firmware": str(firmware_path.resolve()),
+        "cycle_samples": cycle_samples,
+        "simulated_cycles_per_wall_second_stable": cycles_per_second,
+        "cycles_per_retired_stable": cpi,
         "project_commit": command_output(["git", "rev-parse", "HEAD"], project_root),
         "project_dirty": bool(command_output(["git", "status", "--porcelain"], project_root)),
         "host": {

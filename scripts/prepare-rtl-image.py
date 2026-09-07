@@ -3,18 +3,65 @@
 
 from pathlib import Path
 import argparse
+import re
 
 
 RAM_SIZE = 16 * 1024 * 1024
 BANK_SIZE = 8 * 1024 * 1024
 LANES = 16
+DIAG_HEADER = Path(__file__).resolve().parent.parent / "platform/diagnostics/linuxcpu_diag.h"
+DIAG = {name: int(value, 16) for name, value in re.findall(
+    r"^#define LINUXCPU_DIAG_(\w+)\s+(0x[0-9a-fA-F]+)$",
+    DIAG_HEADER.read_text(), re.MULTILINE)}
 
 
-def ram_qword(row: int, upper: bool = False) -> str:
-    first_lane = 8 if upper else 0
+def diag_qword(offset: int) -> str:
+    address = DIAG["BASE"] + offset
+    memory = "`RTL_MEM" if address < BANK_SIZE else "`RTL_MEM2"
+    row = (address % BANK_SIZE) // LANES
+    first_lane = address % LANES
     lanes = range(first_lane + 7, first_lane - 1, -1)
-    bytes_ = ", ".join(f"`RTL_MEM.ram{lane}.mem[20'h{row:05x}]" for lane in lanes)
+    bytes_ = ", ".join(f"{memory}.ram{lane}.mem[20'h{row:05x}]" for lane in lanes)
     return "{" + bytes_ + "}"
+
+
+def diagnostic_monitor() -> list[str]:
+    records = {
+        "trap": ["rc", "cause", "tval", "tval2", "tinst", "mepc", "mstatus", "ra", "sp"],
+        "hang": ["ra", "sp", "mcause", "mepc", "mtval", "mstatus"],
+        "early": ["mcause", "mepc", "mtval", "mstatus", "ra", "sp"],
+    }
+    lines = ["// Protocol v1: only decode records whose final commit word is present.",
+             "task linux_diag_csrs;", "begin"]
+    for csr in ("mcause", "mepc", "mtval", "mstatus", "scause", "sepc", "stval"):
+        lines.append(f'  $display("[fatal-diag] live {csr}=0x%016h", `LINUX_TRAP_CSR.{csr}_value);')
+    lines += ["end", "endtask"]
+    for kind, fields in records.items():
+        offset = DIAG[f"{kind.upper()}_OFFSET"]
+        magic = DIAG[f"{kind.upper()}_MAGIC"]
+        commit = diag_qword(offset + 8 * len(fields))
+        lines += [f"wire linux_diag_{kind}_valid = ({commit} == 64'h{magic:016x});",
+                  f"reg linux_diag_{kind}_seen;", f"task linux_diag_{kind};", "begin"]
+        for i, field in enumerate(fields):
+            lines.append(f'  $display("[fatal-diag] {kind} {field}=0x%016h", {diag_qword(offset + 8 * i)});')
+        lines += ["end", "endtask"]
+    lines += ["task linux_diag_watchdog;", "begin", "  linux_diag_csrs;"]
+    for kind in records:
+        lines += [f"  if (linux_diag_{kind}_valid) linux_diag_{kind};",
+                  f'  else $display("[fatal-diag] {kind} record absent or incomplete");']
+    lines += ["end", "endtask", "always @(negedge clk or negedge rst_b)", "begin",
+              "  if (!rst_b || !linux_reset_seen) begin"]
+    for kind in records:
+        lines.append(f"    linux_diag_{kind}_seen <= 1'b0;")
+    lines += ["  end else begin"]
+    for kind in records:
+        lines += [f"    if (linux_diag_{kind}_valid && !linux_diag_{kind}_seen) begin",
+                  f"      linux_diag_{kind}_seen <= 1'b1;",
+                  f'      $display("[fatal-diag] begin kind={kind} version=1 retired=%0d pc=0x%010h", linux_retired, linux_last_pc);',
+                  f"      linux_diag_{kind};", "      linux_diag_csrs;",
+                  f'      $display("[fatal-diag] complete kind={kind}");', "    end"]
+    lines += ["  end", "end", ""]
+    return lines
 
 
 def replace_loader(source: str, lane_counts: list[int]) -> str:
@@ -86,7 +133,7 @@ def replace_loader(source: str, lane_counts: list[int]) -> str:
         "    linux_retired = linux_retired + 1;",
         "    linux_last_pc = `retire0_pc;",
         "    if ((linux_retired <= 32) || ((linux_retired % 10000) == 0))",
-        '      $display("[linux-diag] retired=%0d pc=0x%010h", linux_retired, `retire0_pc);',
+        '      $display("[linux-diag] retired=%0d pc=0x%010h cycles=%0d mhcr=0x%016h", linux_retired, `retire0_pc, $time / 10, `CPU_TOP.x_aq_top_0.x_aq_core.x_aq_cp0_top.x_aq_cp0_regs.x_aq_cp0_ext_csr.mhcr_value);',
         "  end",
         "  else if (cycle_count == 100)",
         '    $display("[linux-diag] cycle=100 reset=%b pc=0x%010h", `CPU_RST, `retire0_pc);',
@@ -309,6 +356,7 @@ def replace_loader(source: str, lane_counts: list[int]) -> str:
         "end",
         "",
     ])
+    lines.extend(diagnostic_monitor())
     generated = source[:start] + "\n".join(lines) + source[end:]
     watchdog_reset = "if(!rst_b) //reset to zero\n    retire_inst_in_period[31:0] <= 32'b0;"
     portable_reset = (
@@ -338,17 +386,7 @@ def replace_loader(source: str, lane_counts: list[int]) -> str:
         '`LINUX_TRAP_CSR.cp0_yy_priv_mode, linux_timer_cmp_update_count, '
         'linux_timer_mtip_edge_count, linux_timer_stip_edge_count);'
         + "\n"
-        + f'      $display("[linux-diag] OpenSBI hang caller ra=0x%016h", {ram_qword(0x7ff08)});'
-        + "\n"
-        + f'      $display("[linux-diag] trap rc=%0d cause=0x%016h", $signed({ram_qword(0x7ff00)}), {ram_qword(0x7ff00, True)});'
-        + "\n"
-        + f'      $display("[linux-diag] trap tval=0x%016h tval2=0x%016h", {ram_qword(0x7ff01)}, {ram_qword(0x7ff01, True)});'
-        + "\n"
-        + f'      $display("[linux-diag] trap tinst=0x%016h mepc=0x%016h", {ram_qword(0x7ff02)}, {ram_qword(0x7ff02, True)});'
-        + "\n"
-        + f'      $display("[linux-diag] trap mstatus=0x%016h ra=0x%016h", {ram_qword(0x7ff03)}, {ram_qword(0x7ff03, True)});'
-        + "\n"
-        + f'      $display("[linux-diag] trap sp=0x%016h marker=0x%016h", {ram_qword(0x7ff04)}, {ram_qword(0x7ff04, True)});'
+        + "      linux_diag_watchdog;"
     )
     if generated.count(watchdog_message) != 1:
         raise RuntimeError("unsupported upstream tb.v watchdog message")
@@ -363,15 +401,16 @@ def main() -> None:
     args = parser.parse_args()
 
     blob = args.image.read_bytes()
-    if len(blob) > RAM_SIZE:
-        raise SystemExit(f"image is {len(blob)} bytes; RTL RAM is {RAM_SIZE} bytes")
+    if len(blob) > DIAG["BASE"]:
+        raise SystemExit(f"image is {len(blob)} bytes; overlaps reserved diagnostics at {DIAG['BASE']:#x}")
 
     args.output.mkdir(parents=True, exist_ok=True)
     for obsolete in args.output.glob("ram*.hex"):
         obsolete.unlink()
     for obsolete in args.output.glob("ram*.bin"):
         obsolete.unlink()
-    padded = blob + bytes((-len(blob)) % LANES)
+    # Fixed loader lengths let one model compare differently sized firmware.
+    padded = blob + bytes(RAM_SIZE - len(blob))
 
     lane_counts = []
     for bank in range(2):

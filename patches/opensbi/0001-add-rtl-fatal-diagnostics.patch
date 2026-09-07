@@ -1,42 +1,117 @@
+diff --git a/firmware/fw_base.S b/firmware/fw_base.S
+index 0c5c65c..912c0c2 100644
+--- a/firmware/fw_base.S
++++ b/firmware/fw_base.S
+@@ -8,6 +8,7 @@
+  */
+ 
+ #include <sbi/riscv_asm.h>
++#include <linuxcpu_diag.h>
+ #include <sbi/riscv_encoding.h>
+ #include <sbi/riscv_elf.h>
+ #include <sbi/sbi_platform.h>
+@@ -425,8 +426,28 @@ _hartid_to_scratch:
+ 	.align 3
+ 	.globl _start_hang
+ _start_hang:
++	/* No stack, C runtime, console or cache maintenance required. */
++	li	t0, MSTATUS_MPRV | MSTATUS_MIE
++	csrrc	t2, CSR_MSTATUS, t0
++	li	t0, LINUXCPU_DIAG_BASE + LINUXCPU_DIAG_EARLY_OFFSET
++	sd	zero, 48(t0)
++	fence	iorw, iorw
++	sd	ra, 32(t0)
++	sd	sp, 40(t0)
++	csrr	t1, CSR_MCAUSE
++	sd	t1, 0(t0)
++	csrr	t1, CSR_MEPC
++	sd	t1, 8(t0)
++	csrr	t1, CSR_MTVAL
++	sd	t1, 16(t0)
++	sd	t2, 24(t0)
++	fence	iorw, iorw
++	li	t1, LINUXCPU_DIAG_EARLY_MAGIC
++	sd	t1, 48(t0)
++	fence	iorw, iorw
++1:
+ 	wfi
+-	j	_start_hang
++	j	1b
+ 
+ 	.section .entry, "ax", %progbits
+ 	.align 3
 diff --git a/lib/sbi/sbi_hart.c b/lib/sbi/sbi_hart.c
+index bee8855..df10309 100644
 --- a/lib/sbi/sbi_hart.c
 +++ b/lib/sbi/sbi_hart.c
-@@ -734,8 +734,13 @@ int sbi_hart_init(struct sbi_scratch *scratch, bool cold_boot)
- 	return sbi_hart_reinit(scratch);
- }
+@@ -8,6 +8,7 @@
+  */
  
-+/* Testbench-only fatal diagnostics; normal boot never writes this address. */
-+#define LINUXCPU_HANG_RA_ADDR 0x007ff080UL
-+
+ #include <sbi/riscv_asm.h>
++#include <linuxcpu_diag.h>
+ #include <sbi/riscv_barrier.h>
+ #include <sbi/riscv_encoding.h>
+ #include <sbi/riscv_fp.h>
+@@ -736,6 +737,23 @@ int sbi_hart_init(struct sbi_scratch *scratch, bool cold_boot)
+ 
  void __attribute__((noreturn)) sbi_hart_hang(void)
  {
-+	*(volatile unsigned long *)LINUXCPU_HANG_RA_ADDR =
-+		(unsigned long)__builtin_return_address(0);
++	volatile unsigned long *diag = (volatile unsigned long *)
++		(LINUXCPU_DIAG_BASE + LINUXCPU_DIAG_HANG_OFFSET);
++	unsigned long sp;
++	unsigned long status = csr_read_clear(CSR_MSTATUS, MSTATUS_MPRV | MSTATUS_MIE);
++
++	asm volatile("mv %0, sp" : "=r"(sp));
++	diag[6] = 0;
++	asm volatile("fence iorw, iorw" ::: "memory");
++	diag[0] = (unsigned long)__builtin_return_address(0);
++	diag[1] = sp;
++	diag[2] = csr_read(CSR_MCAUSE);
++	diag[3] = csr_read(CSR_MEPC);
++	diag[4] = csr_read(CSR_MTVAL);
++	diag[5] = status;
++	asm volatile("fence iorw, iorw" ::: "memory");
++	diag[6] = LINUXCPU_DIAG_HANG_MAGIC;
++	asm volatile("fence iorw, iorw" ::: "memory");
  	while (1)
  		wfi();
  	__builtin_unreachable();
 diff --git a/lib/sbi/sbi_trap.c b/lib/sbi/sbi_trap.c
+index 16774fd..3235f0c 100644
 --- a/lib/sbi/sbi_trap.c
 +++ b/lib/sbi/sbi_trap.c
-@@ -79,8 +79,22 @@ static void __noreturn sbi_trap_error(const char *msg, int rc,
+@@ -8,6 +8,7 @@
+  */
+ 
+ #include <sbi/riscv_asm.h>
++#include <linuxcpu_diag.h>
+ #include <sbi/riscv_encoding.h>
+ #include <sbi/sbi_bitops.h>
+ #include <sbi/sbi_console.h>
+@@ -79,8 +80,27 @@ static void __noreturn sbi_trap_error(const char *msg, int rc,
  				      const struct sbi_trap_context *tcntx)
  {
  	u32 depth = 0, hartid = current_hartid();
-+	volatile unsigned long *linuxcpu_diag =
-+		(volatile unsigned long *)0x007ff000UL;
++	volatile unsigned long *diag = (volatile unsigned long *)
++		(LINUXCPU_DIAG_BASE + LINUXCPU_DIAG_TRAP_OFFSET);
  	const struct sbi_trap_context *tc;
  
-+	/* Preserve fatal trap details for the RTL testbench, before console init. */
-+	linuxcpu_diag[0] = (unsigned long)rc;
-+	linuxcpu_diag[1] = tcntx->trap.cause;
-+	linuxcpu_diag[2] = tcntx->trap.tval;
-+	linuxcpu_diag[3] = tcntx->trap.tval2;
-+	linuxcpu_diag[4] = tcntx->trap.tinst;
-+	linuxcpu_diag[5] = tcntx->regs.mepc;
-+	linuxcpu_diag[6] = tcntx->regs.mstatus;
-+	linuxcpu_diag[7] = tcntx->regs.ra;
-+	linuxcpu_diag[8] = tcntx->regs.sp;
-+	linuxcpu_diag[9] = 0x4c696e7578433930UL;
++	/* Commit last: the testbench never decodes a partial record. */
++	csr_clear(CSR_MSTATUS, MSTATUS_MPRV | MSTATUS_MIE);
++	diag[9] = 0;
++	asm volatile("fence iorw, iorw" ::: "memory");
++	diag[0] = (unsigned long)rc;
++	diag[1] = tcntx->trap.cause;
++	diag[2] = tcntx->trap.tval;
++	diag[3] = tcntx->trap.tval2;
++	diag[4] = tcntx->trap.tinst;
++	diag[5] = tcntx->regs.mepc;
++	diag[6] = tcntx->regs.mstatus;
++	diag[7] = tcntx->regs.ra;
++	diag[8] = tcntx->regs.sp;
++	asm volatile("fence iorw, iorw" ::: "memory");
++	diag[9] = LINUXCPU_DIAG_TRAP_MAGIC;
++	asm volatile("fence iorw, iorw" ::: "memory");
 +
  	for (tc = tcntx; tc; tc = tc->prev_context)
  		depth++;

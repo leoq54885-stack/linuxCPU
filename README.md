@@ -1,7 +1,7 @@
 # linuxCPU
 
 在真实 OpenC906 RTL 上启动最小 RISC-V Linux 的可复现工程。主仿真器是
-Verilator 5.020，不使用 QEMU；Icarus Verilog/VVP 用于官方基线和慢速独立
+Verilator 5.050（本地安装存在时默认优先选择）；Icarus Verilog/VVP 用于官方基线和慢速独立
 交叉验证。
 
 ## 快速开始
@@ -66,8 +66,9 @@ taskset -pc 9 $PID    # 选一个空闲 P 核
 性能实验、多线程模型构建和已确认的负扩展原因见
 [Verilator 仿真性能冒烟与多核排查](docs/simulation-performance.md)。实验确认
 Verilator 5.050 单线程约为 5.020 的 2.97 倍；但 5.050 的 t2/t4 仍然负扩展，
-普通主机多线程路线已止损。当前锁定工具链仍保持不变，5.050 候选模型通过
-`LINUXCPU_VERILATOR_BIN` 和 `LINUXCPU_VERILATOR_VARIANT` 旁路选择。
+普通主机多线程路线已止损。本机默认优先使用已安装的 5.050；旧版包仍保留为
+安装回退。可用 `LINUXCPU_VERILATOR_BIN` 显式指定版本，或用
+`LINUXCPU_VERILATOR_VARIANT` 隔离实验模型。
 `LINUXCPU_VERILATOR_THREADS=N` 可生成并存的 tN 实验模型。固定时长冒烟示例：
 
 ```bash
@@ -111,12 +112,17 @@ Linux testbench overlay 会把上游面向短裸机用例的 50,000-cycle 无退
 `LINUXCPU_FAST_UART=1` 时才启用“发送器始终就绪”的实验性 overlay；该选项
 不作为跑通 Linux 的验收依据。
 
-构建 RTL 模型时会临时应用项目的 OpenC906 系统映射补丁：16 MiB RAM 仍为
-普通可缓存内存，从 `0x10015000` 开始的 smart_run 外设窗口改为强序、不可
-缓存。这样 C906 会对 UART 发出精确的 32 位设备事务；构建结束后，上游
-checkout 会自动还原并保持干净。
+构建 RTL 模型时会临时应用项目的 OpenC906 系统映射补丁：16 MiB RAM 的
+最后4 KiB（`0x00fff000`）保留为强序、不可缓存的 fatal 诊断页，其余 RAM
+仍可缓存。UART 也位于强序不可缓存窗口。固件无需初始化串口即可提交
+诊断记录，testbench 立即输出，运行器返回失败。协议、限制和故障注入验收见
+[诊断通道说明](experiments/uncached-diagnostics.md)。构建后上游 checkout 自动还原。
 
 ## 启动链和验收
+
+本分支的 Linux 构建默认使用 `LINUXCPU_LINUX_PROFILE=trim`，关闭 VT 和
+legacy PTY，保留串口与 UNIX98 PTY。`baseline` 可恢复原配置配方。
+独立构建路径、短测结果和加速预估见[第一轮 Linux 精简](experiments/linux-trim-20260907.md)。
 
 ```text
 OpenC906 reset @ 0x0

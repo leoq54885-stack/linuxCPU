@@ -17,6 +17,7 @@ UART_THR_WRITE = re.compile(
     rb"\[uart-diag\] THR write #[0-9]+ .*?\bdata=([0-9a-fA-F]{2})\b"
 )
 RETIRED_PROGRESS = re.compile(rb"\[linux-diag\] retired=([0-9]+)\b")
+FATAL_COMPLETE = re.compile(rb"\[fatal-diag\] complete kind=(trap|hang|early)\b")
 
 
 def extract_uart_bytes(buffer: bytes, chunk: bytes) -> tuple[bytes, bytes]:
@@ -59,6 +60,7 @@ def main() -> int:
     args.log.parent.mkdir(parents=True, exist_ok=True)
     deadline = None if args.timeout == 0 else time.monotonic() + args.timeout
     found = False
+    fatal_kind = None
     command = [os.fspath(args.model)]
     if shutil.which("stdbuf"):
         command = ["stdbuf", "-o0", "-e0", *command]
@@ -76,6 +78,7 @@ def main() -> int:
         uart_recent = b""
         line_buffer = b""
         progress_buffer = b""
+        fatal_buffer = b""
         last_progress: tuple[float, int] | None = None
         with args.log.open("wb") as log:
             while deadline is None or time.monotonic() < deadline:
@@ -98,6 +101,14 @@ def main() -> int:
                 log.flush()
                 sys.stdout.buffer.write(chunk)
                 sys.stdout.buffer.flush()
+                fatal_lines = (fatal_buffer + chunk).split(b"\n")
+                fatal_buffer = fatal_lines.pop()[-4096:]
+                for line in fatal_lines:
+                    match = FATAL_COMPLETE.search(line)
+                    if match:
+                        fatal_kind = match.group(1).decode()
+                if fatal_kind is not None:
+                    break
                 recent = (recent + chunk)[-2 * len(SUCCESS) :]
                 line_buffer, uart = extract_uart_bytes(line_buffer, chunk)
                 progress_buffer, retired_values = extract_retired(
@@ -136,6 +147,9 @@ def main() -> int:
                 proc.kill()
                 proc.wait()
 
+    if fatal_kind is not None:
+        print(f"[rtl-linux] FAIL: OpenSBI {fatal_kind} diagnostic committed; see {args.log}", file=sys.stderr)
+        return 1
     if found:
         print("[rtl-linux] PASS: Linux reached the project PID 1 marker")
         return 0

@@ -56,5 +56,12 @@ if ! grep -aFq 'thead,c900-clint' "$DTB"; then
     exit 1
 fi
 
+diag_node=/reserved-memory/fatal-diagnostics@fff000
+if [[ "$(fdtget -tx "$DTB" "$diag_node" reg)" != '0 fff000 0 1000' ]] || \
+   ! fdtget "$DTB" "$diag_node" no-map >/dev/null; then
+    echo '[firmware-dtb] reserved no-map diagnostic page at 0x00fff000 is missing' >&2
+    exit 1
+fi
+
 printf '[firmware-dtb] exact match: offset=0x%x size=%d compatible=thead,c900-plic,thead,c900-clint\n' \
     "$fdt_offset" "$dtb_size"

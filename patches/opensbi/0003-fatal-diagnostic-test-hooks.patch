@@ -1,0 +1,24 @@
+diff --git a/platform/generic/platform.c b/platform/generic/platform.c
+--- a/platform/generic/platform.c
++++ b/platform/generic/platform.c
+@@ -13,2 +13,3 @@
+ #include <sbi/sbi_bitops.h>
++#include <sbi/sbi_hart.h>
+ #include <sbi/sbi_hartmask.h>
+@@ -153,2 +154,6 @@ unsigned long fw_platform_init(unsigned long arg0, unsigned long arg1,
++#if LINUXCPU_DIAG_TEST == 1
++	/* Deliberately fault before the C trap handler and serial setup. */
++	asm volatile(".word 0");
++#endif
+ 	root_offset = fdt_path_offset(fdt, "/");
+ 	if (root_offset < 0)
+@@ -224,3 +229,9 @@ int generic_early_init(bool cold_boot)
++#if LINUXCPU_DIAG_TEST == 2
++	sbi_hart_hang();
++#elif LINUXCPU_DIAG_TEST == 3
++	/* Machine trap handler installed, but serial is not initialized yet. */
++	asm volatile(".word 0");
++#endif
+ 	if (cold_boot) {
+ 		if (semihosting_enabled())
+ 			rc = semihosting_init();

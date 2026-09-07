@@ -20,6 +20,17 @@
 		reg = <0x0 0x00000000 0x0 0x01000000>;
 	};
 
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+		/* Must match linuxcpu_diag.h and the reset-time RTL sysmap. */
+		fatal-diagnostics@fff000 {
+			reg = <0x0 0x00fff000 0x0 0x00001000>;
+			no-map;
+		};
+	};
+
 	cpus {
 		#address-cells = <1>;
 		#size-cells = <0>;
