@@ -1,0 +1,22 @@
+diff --git a/platform/generic/platform.c b/platform/generic/platform.c
+--- a/platform/generic/platform.c
++++ b/platform/generic/platform.c
+@@ -151,5 +151,18 @@ unsigned long fw_platform_init(unsigned long arg0, unsigned long arg1,
+ 	unsigned long tmp = 0;
+ 
++#if defined(LINUXCPU_C906_MHCR) && LINUXCPU_C906_MHCR
++	/* Match only this RTL platform; follow smart_run/tests/lib/crt0.s. */
++	if (!fdt_node_check_compatible(fdt, 0, "xuantie,open-c906-smart-run")) {
++		csr_set(0x7c2, 0x30013);
++		csr_set(0x7c1, LINUXCPU_C906_MHCR);
++#if LINUXCPU_C906_MHINT
++		csr_set(0x7c5, LINUXCPU_C906_MHINT);
++#endif
++		asm volatile("fence iorw, iorw" ::: "memory");
++		asm volatile("fence.i" ::: "memory");
++	}
++#endif
++
+ 	root_offset = fdt_path_offset(fdt, "/");
+ 	if (root_offset < 0)
+ 		goto fail;

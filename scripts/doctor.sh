@@ -66,10 +66,10 @@ else
 fi
 
 verilator_ver="$(verilator --version 2>&1 || true)"
-if printf '%s' "$verilator_ver" | grep -q 'Verilator 5\.020'; then
-    ok "Verilator version 5.020"
+if printf '%s' "$verilator_ver" | grep -q 'Verilator 5\.050'; then
+    ok "Verilator version 5.050"
 else
-    bad "Verilator is not the pinned 5.020 release"
+    bad "Verilator is not the preferred 5.050 release"
 fi
 
 if grep -q 'clint_top  x_clint_top' \

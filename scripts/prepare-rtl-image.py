@@ -86,7 +86,7 @@ def replace_loader(source: str, lane_counts: list[int]) -> str:
         "    linux_retired = linux_retired + 1;",
         "    linux_last_pc = `retire0_pc;",
         "    if ((linux_retired <= 32) || ((linux_retired % 10000) == 0))",
-        '      $display("[linux-diag] retired=%0d pc=0x%010h", linux_retired, `retire0_pc);',
+        '      $display("[linux-diag] retired=%0d pc=0x%010h cycles=%0d mhcr=0x%016h", linux_retired, `retire0_pc, $time / 10, `CPU_TOP.x_aq_top_0.x_aq_core.x_aq_cp0_top.x_aq_cp0_regs.x_aq_cp0_ext_csr.mhcr_value);',
         "  end",
         "  else if (cycle_count == 100)",
         '    $display("[linux-diag] cycle=100 reset=%b pc=0x%010h", `CPU_RST, `retire0_pc);',
@@ -371,7 +371,8 @@ def main() -> None:
         obsolete.unlink()
     for obsolete in args.output.glob("ram*.bin"):
         obsolete.unlink()
-    padded = blob + bytes((-len(blob)) % LANES)
+    # Fixed loader lengths let one model compare differently sized firmware.
+    padded = blob + bytes(RAM_SIZE - len(blob))
 
     lane_counts = []
     for bank in range(2):

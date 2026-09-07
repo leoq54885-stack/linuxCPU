@@ -1,7 +1,7 @@
 # linuxCPU
 
 在真实 OpenC906 RTL 上启动最小 RISC-V Linux 的可复现工程。主仿真器是
-Verilator 5.020，不使用 QEMU；Icarus Verilog/VVP 用于官方基线和慢速独立
+Verilator 5.050（本地安装存在时默认优先选择）；Icarus Verilog/VVP 用于官方基线和慢速独立
 交叉验证。
 
 ## 快速开始
@@ -66,8 +66,9 @@ taskset -pc 9 $PID    # 选一个空闲 P 核
 性能实验、多线程模型构建和已确认的负扩展原因见
 [Verilator 仿真性能冒烟与多核排查](docs/simulation-performance.md)。实验确认
 Verilator 5.050 单线程约为 5.020 的 2.97 倍；但 5.050 的 t2/t4 仍然负扩展，
-普通主机多线程路线已止损。当前锁定工具链仍保持不变，5.050 候选模型通过
-`LINUXCPU_VERILATOR_BIN` 和 `LINUXCPU_VERILATOR_VARIANT` 旁路选择。
+普通主机多线程路线已止损。本机默认优先使用已安装的 5.050；旧版包仍保留为
+安装回退。可用 `LINUXCPU_VERILATOR_BIN` 显式指定版本，或用
+`LINUXCPU_VERILATOR_VARIANT` 隔离实验模型。
 `LINUXCPU_VERILATOR_THREADS=N` 可生成并存的 tN 实验模型。固定时长冒烟示例：
 
 ```bash

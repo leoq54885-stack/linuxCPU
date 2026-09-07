@@ -164,6 +164,6 @@ printf '[rtl-linux] runtime simulation threads: %s\n' "$THREADS"
         -f "$SIM_OUTPUT/tb-linux.fl"
 )
 
-ls -lh "$MODEL" "$ROOT/output/opensbi-c906/platform/generic/firmware/fw_payload.bin"
+ls -lh "$MODEL"
 printf '%s\n' "$EXPECTED_BUILD_INFO" > "$BUILD_INFO"
 printf '[rtl-linux] build info: %s\n' "$BUILD_INFO"

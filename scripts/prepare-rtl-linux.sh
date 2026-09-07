@@ -4,17 +4,26 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SMART="$ROOT/openc906/smart_run"
 SIM_OUTPUT="$ROOT/output/sim"
-FIRMWARE="$ROOT/output/opensbi-c906/platform/generic/firmware/fw_payload.bin"
+OPENSBI_OUTPUT="${LINUXCPU_OPENSBI_OUTPUT:-$ROOT/output/opensbi-c906}"
+CACHE_MODE="${LINUXCPU_CACHE_MODE:-off}"
+if [[ "$CACHE_MODE" != off && -z "${LINUXCPU_OPENSBI_OUTPUT:-}" ]]; then
+    OPENSBI_OUTPUT="$ROOT/output/opensbi-cache-$CACHE_MODE"
+fi
+FIRMWARE="$OPENSBI_OUTPUT/platform/generic/firmware/fw_payload.bin"
 LINUX_IMAGE="$ROOT/output/linux/arch/riscv/boot/Image"
 DT_SOURCE="$ROOT/platform/dts/open-c906-smart-run.dts"
 DTB="$ROOT/output/dts/open-c906-smart-run.dtb"
 
 firmware_stale=0
-if [[ ! -f "$FIRMWARE" ]]; then
+if [[ ! -f "$FIRMWARE" || ! -f "$OPENSBI_OUTPUT/cache-mode" ]]; then
+    firmware_stale=1
+elif [[ "$(<"$OPENSBI_OUTPUT/cache-mode")" != "$CACHE_MODE" ]]; then
     firmware_stale=1
 else
     for input in "$LINUX_IMAGE" "$DT_SOURCE" "$DTB" \
         "$ROOT/scripts/build-dtb.sh" "$ROOT/scripts/build-opensbi.sh" \
+        "$ROOT/patches/opensbi/0001-add-rtl-fatal-diagnostics.patch" \
+        "$ROOT/patches/opensbi/0002-smart-run-cache-experiment.patch" \
         "$ROOT/configs/opensbi-c906-defconfig"; do
         if [[ -e "$input" && "$input" -nt "$FIRMWARE" ]]; then
             firmware_stale=1
@@ -28,7 +37,7 @@ if ((firmware_stale == 1)); then
 fi
 
 "$ROOT/scripts/verify-firmware-dtb.sh" "$FIRMWARE" \
-    "$ROOT/output/opensbi-c906/platform/generic/firmware/fw_payload.elf" "$DTB"
+    "$OPENSBI_OUTPUT/platform/generic/firmware/fw_payload.elf" "$DTB"
 mkdir -p "$SIM_OUTPUT"
 
 "$ROOT/scripts/prepare-rtl-image.py" \

@@ -6,6 +6,12 @@ THREADS="${LINUXCPU_VERILATOR_THREADS:-1}"
 VARIANT="${LINUXCPU_VERILATOR_VARIANT:-default}"
 DURATION="${LINUXCPU_PERF_SMOKE_SECONDS:-120}"
 CPUS="${LINUXCPU_PERF_CPUS:-}"
+CACHE_MODE="${LINUXCPU_CACHE_MODE:-off}"
+FIRMWARE_OUTPUT="$ROOT/output/opensbi-c906"
+if [[ "$CACHE_MODE" != off ]]; then
+    FIRMWARE_OUTPUT="$ROOT/output/opensbi-cache-$CACHE_MODE"
+fi
+FIRMWARE_OUTPUT="${LINUXCPU_OPENSBI_OUTPUT:-$FIRMWARE_OUTPUT}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 RESULT_DIR="${LINUXCPU_PERF_OUTPUT:-$ROOT/output/benchmarks/$STAMP}"
 
@@ -27,6 +33,7 @@ fi
 "$ROOT/scripts/prepare-rtl-linux.sh"
 args=(
     --model "$MODEL"
+    --firmware "$FIRMWARE_OUTPUT/platform/generic/firmware/fw_payload.bin"
     --cwd "$ROOT/output/sim"
     --output-dir "$RESULT_DIR"
     --label "t${THREADS}"

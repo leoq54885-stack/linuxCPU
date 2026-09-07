@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+RECENT="$ROOT/.toolchain/verilator-5.050-install"
+if [[ -x "$RECENT/bin/verilator" ]]; then
+    export VERILATOR_ROOT="$RECENT/share/verilator"
+    exec "$RECENT/bin/verilator" "$@"
+fi
 LOCAL="$ROOT/.toolchain/verilator"
 
 if [[ -x "$LOCAL/usr/bin/verilator_bin" ]]; then
