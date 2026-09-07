@@ -25,7 +25,11 @@ __pycache__/
 *.report
 
 # Keep the final, independently verified RTL acceptance log.
-!/log/c906-linux-verilator-laptop-success.log
+# /log/ is now fully untracked (see below).
+
+# Work notes and logs: not version-controlled to avoid branch conflicts
+/docs/
+/log/
 
 # QEMU test build artifacts (script and README are tracked)
 /QEMUtest/initramfs/
