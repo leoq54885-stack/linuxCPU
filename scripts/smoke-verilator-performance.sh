@@ -12,6 +12,9 @@ if [[ "$CACHE_MODE" != off ]]; then
     FIRMWARE_OUTPUT="$ROOT/output/opensbi-cache-$CACHE_MODE"
 fi
 FIRMWARE_OUTPUT="${LINUXCPU_OPENSBI_OUTPUT:-$FIRMWARE_OUTPUT}"
+if [[ "${LINUXCPU_DIAG_TEST:-none}" != none && -z "${LINUXCPU_OPENSBI_OUTPUT:-}" ]]; then
+    FIRMWARE_OUTPUT="$ROOT/output/opensbi-diag-test-$CACHE_MODE-$LINUXCPU_DIAG_TEST"
+fi
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 RESULT_DIR="${LINUXCPU_PERF_OUTPUT:-$ROOT/output/benchmarks/$STAMP}"
 

@@ -20,7 +20,7 @@ import time
 
 
 RETIRED = re.compile(rb"\[linux-diag\] retired=([0-9]+)\b")
-FAILURE = re.compile(rb"(?:%Error|\* Error:|\[linux-diag\] stalled after)")
+FAILURE = re.compile(rb"(?:%Error|%Fatal|\* Error:|\[linux-diag\] stalled after|\[fatal-diag\] complete kind=)")
 SCHED_FIELDS = {
     "nr_switches": "context_switches",
     "nr_voluntary_switches": "voluntary_switches",

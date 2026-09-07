@@ -112,10 +112,11 @@ Linux testbench overlay 会把上游面向短裸机用例的 50,000-cycle 无退
 `LINUXCPU_FAST_UART=1` 时才启用“发送器始终就绪”的实验性 overlay；该选项
 不作为跑通 Linux 的验收依据。
 
-构建 RTL 模型时会临时应用项目的 OpenC906 系统映射补丁：16 MiB RAM 仍为
-普通可缓存内存，从 `0x10015000` 开始的 smart_run 外设窗口改为强序、不可
-缓存。这样 C906 会对 UART 发出精确的 32 位设备事务；构建结束后，上游
-checkout 会自动还原并保持干净。
+构建 RTL 模型时会临时应用项目的 OpenC906 系统映射补丁：16 MiB RAM 的
+最后4 KiB（`0x00fff000`）保留为强序、不可缓存的 fatal 诊断页，其余 RAM
+仍可缓存。UART 也位于强序不可缓存窗口。固件无需初始化串口即可提交
+诊断记录，testbench 立即输出，运行器返回失败。协议、限制和故障注入验收见
+[诊断通道说明](experiments/uncached-diagnostics.md)。构建后上游 checkout 自动还原。
 
 ## 启动链和验收
 

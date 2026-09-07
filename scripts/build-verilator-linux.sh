@@ -104,6 +104,7 @@ PROJECT_INPUT_SHA256="$(
     sha256sum \
         "$OPENC906_PATCH" \
         "$ROOT/scripts/prepare-rtl-image.py" \
+        "$ROOT/platform/diagnostics/linuxcpu_diag.h" \
         "$ROOT/scripts/prepare-rtl-linux.sh" \
         "$ROOT/scripts/prepare-sim-uart.py" \
         "$ROOT/scripts/verilator-main.cpp" \
