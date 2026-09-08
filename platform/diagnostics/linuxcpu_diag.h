@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause
- * RV64 smart_run fatal mailbox, protocol v1. See docs in experiments/.
+ * RV64 smart_run fatal mailbox, protocol v1. Shared firmware/testbench constants.
  * This page must be reserved and strongly ordered / non-cacheable at reset.
  */
 #ifndef LINUXCPU_DIAG_H

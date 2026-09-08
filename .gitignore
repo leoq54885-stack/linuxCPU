@@ -24,10 +24,10 @@ __pycache__/
 *.log
 *.report
 
-# Keep the final, independently verified RTL acceptance log.
-# /log/ is now fully untracked (see below).
-
-# Work notes and logs: not version-controlled to avoid branch conflicts
+# Local records: only two maintained files under /记录/.
+/记录/
+# Retired record locations: prevent accidental reintroduction.
+/experiments/
 /docs/
 /log/
 

@@ -3,7 +3,7 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/env.sh"
 MODEL="${LINUXCPU_DIAG_MODEL:-$ROOT/output/verilator/diag-mailbox/c906-linux}"
-[[ -x "$MODEL" ]] || { echo "Build the diag-mailbox variant first (see experiments/uncached-diagnostics.md)" >&2; exit 1; }
+[[ -x "$MODEL" ]] || { echo "Build the model first: LINUXCPU_VERILATOR_VARIANT=diag-mailbox scripts/build-verilator-linux.sh (or set LINUXCPU_DIAG_MODEL)" >&2; exit 1; }
 mkdir -p "$ROOT/output/tests"
 WORK="$(mktemp -d "$ROOT/output/tests/fatal-diag.XXXXXX")"
 for case_name in committed partial; do
