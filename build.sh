@@ -23,8 +23,16 @@ case "${1:-rtl-smoke}" in
         shift || true
         exec "$ROOT/scripts/build-rtl-linux.sh" "$@"
         ;;
+    rtl-linux-cadence)
+        shift
+        exec bash "$ROOT/scripts/cadence.sh" build "$@"
+        ;;
+    cadence-package)
+        shift
+        exec bash "$ROOT/scripts/cadence.sh" package "$@"
+        ;;
     *)
-        printf 'Usage: %s {rtl-smoke|linux|firmware|rtl-linux|rtl-linux-iverilog}\n' "$0" >&2
+        printf 'Usage: %s {rtl-smoke|linux|firmware|rtl-linux|rtl-linux-iverilog|rtl-linux-cadence|cadence-package}\n' "$0" >&2
         exit 2
         ;;
 esac

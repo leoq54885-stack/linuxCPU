@@ -42,7 +42,7 @@ mkdir -p "$PROJECT_ROOT/.cache/downloads" "$PROJECT_ROOT/.toolchain" \
     "$PROJECT_ROOT/output"
 
 host_commands=(
-    git make gcc g++ python3 curl xz bc bison flex cpio rsync file dtc
+    git make gcc g++ python3 curl xz bc bison flex cpio rsync file dtc patch
     riscv64-linux-gnu-gcc riscv64-linux-gnu-objcopy
     riscv64-unknown-elf-gcc riscv64-unknown-elf-objcopy
 )
@@ -59,7 +59,7 @@ if ((${#missing[@]})); then
     command -v apt-get >/dev/null 2>&1 || \
         die "missing host commands (${missing[*]}) and apt-get is unavailable"
     packages=(
-        git make gcc g++ python3 curl xz-utils bc bison flex cpio rsync file
+        git make gcc g++ python3 curl xz-utils bc bison flex cpio rsync file patch
         device-tree-compiler libncurses-dev
         gcc-riscv64-linux-gnu g++-riscv64-linux-gnu
         binutils-riscv64-linux-gnu gcc-riscv64-unknown-elf

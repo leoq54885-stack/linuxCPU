@@ -15,8 +15,12 @@ case "${1:-}" in
         shift
         exec "$ROOT/scripts/run-rtl-linux.sh" "$@"
         ;;
+    linux-cadence)
+        shift
+        exec bash "$ROOT/scripts/cadence.sh" run "$@"
+        ;;
     *)
-        echo "Usage: $0 {smoke|linux|linux-iverilog}" >&2
+        echo "Usage: $0 {smoke|linux|linux-iverilog|linux-cadence}" >&2
         exit 2
         ;;
 esac
