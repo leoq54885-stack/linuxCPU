@@ -43,6 +43,7 @@ mkdir -p "$PROJECT_ROOT/.cache/downloads" "$PROJECT_ROOT/.toolchain" \
 
 host_commands=(
     git make gcc g++ python3 curl xz bc bison flex cpio rsync file dtc patch
+    autoconf perl
     riscv64-linux-gnu-gcc riscv64-linux-gnu-objcopy
     riscv64-unknown-elf-gcc riscv64-unknown-elf-objcopy
 )
@@ -60,7 +61,7 @@ if ((${#missing[@]})); then
         die "missing host commands (${missing[*]}) and apt-get is unavailable"
     packages=(
         git make gcc g++ python3 curl xz-utils bc bison flex cpio rsync file patch
-        device-tree-compiler libncurses-dev
+        device-tree-compiler libncurses-dev autoconf libfl-dev zlib1g-dev
         gcc-riscv64-linux-gnu g++-riscv64-linux-gnu
         binutils-riscv64-linux-gnu gcc-riscv64-unknown-elf
         binutils-riscv64-unknown-elf
@@ -160,43 +161,46 @@ if ((SKIP_IVERILOG == 0)); then
 fi
 
 install_local_verilator() {
-    local install_root="$PROJECT_ROOT/.toolchain/verilator"
-    local cache_file="$PROJECT_ROOT/.cache/downloads/$VERILATOR_DEB_FILE"
+    local install_root="$PROJECT_ROOT/.toolchain/verilator-5.050-install"
+    local cache_file="$PROJECT_ROOT/.cache/downloads/$VERILATOR_TARBALL"
+    local src_dir="$PROJECT_ROOT/.cache/verilator-build/verilator-5.050"
 
-    if [[ -x "$install_root/usr/bin/verilator_bin" ]]; then
-        if VERILATOR_ROOT="$install_root/usr/share/verilator" \
-            "$install_root/usr/bin/verilator_bin" --version 2>&1 | \
-            grep -q 'Verilator 5\.020'; then
-            log "Verilator 5.020 already installed locally"
+    if [[ -x "$install_root/bin/verilator" ]]; then
+        if "$install_root/bin/verilator" --version 2>&1 | \
+            grep -q 'Verilator 5\.050'; then
+            log "Verilator 5.050 already installed locally"
             return
         fi
         die "$install_root contains an unexpected Verilator version"
     fi
 
-    command -v apt-get >/dev/null 2>&1 || \
-        die "apt-get is needed for the pinned local Verilator package on the supported Ubuntu host"
-    command -v dpkg-deb >/dev/null 2>&1 || die "dpkg-deb is required"
+    for tool in autoconf make g++ flex bison perl python3 curl; do
+        command -v "$tool" >/dev/null 2>&1 || \
+            die "$tool is required to build Verilator 5.050"
+    done
 
     if [[ ! -f "$cache_file" ]]; then
-        log "downloading Verilator $VERILATOR_DEB_VERSION into .cache"
-        (
-            cd "$PROJECT_ROOT/.cache/downloads"
-            apt-get download "verilator=$VERILATOR_DEB_VERSION"
-        )
-        local downloaded
-        downloaded="$(find "$PROJECT_ROOT/.cache/downloads" -maxdepth 1 -type f \
-            -name 'verilator_*_amd64.deb' -print -quit)"
-        [[ -n "$downloaded" ]] || die "Verilator package download did not produce a .deb"
-        [[ "$downloaded" == "$cache_file" ]] || mv "$downloaded" "$cache_file"
+        log "downloading Verilator 5.050 source archive"
+        curl -fL --retry 3 -o "$cache_file" "$VERILATOR_URL" || \
+            die "Verilator source download failed"
     fi
-
-    printf '%s  %s\n' "$VERILATOR_DEB_SHA256" "$cache_file" | \
+    printf '%s  %s\n' "$VERILATOR_SHA256" "$cache_file" | \
         sha256sum --check --status || die "checksum mismatch for $cache_file"
-    mkdir -p "$install_root"
-    dpkg-deb -x "$cache_file" "$install_root"
-    [[ -x "$install_root/usr/bin/verilator_bin" ]] || \
-        die "local Verilator extraction failed"
-    log "Verilator installed under .toolchain"
+
+    log "building Verilator 5.050 (several minutes)"
+    rm -rf "$src_dir"
+    mkdir -p "$src_dir"
+    tar -xzf "$cache_file" -C "$src_dir" --strip-components=1
+    (
+        cd "$src_dir"
+        autoconf
+        ./configure --prefix="$install_root"
+        make -j"$(nproc)"
+        make install
+    ) || die "Verilator 5.050 build failed"
+    [[ -x "$install_root/bin/verilator" ]] || \
+        die "local Verilator installation incomplete"
+    log "Verilator 5.050 installed under .toolchain"
 }
 
 if ((SKIP_VERILATOR == 0)); then

@@ -33,7 +33,7 @@ Cadence 采用构建主机生成软件、仿真主机编译 RTL 的交付方式�
 
 ## 准备构建主机
 
-首次准备需要网络；`setup.sh` 通过 `sudo` 安装缺少的主机依赖，并下载固定源码及基础工具。
+首次准备需要网络；`setup.sh` 通过 `sudo` 安装缺少的主机依赖，下载固定源码及基础工具，并从固定源码包本地构建 Verilator 5.050（数分钟）。
 
 ```bash
 git clone https://github.com/leoq54885-stack/linuxCPU.git

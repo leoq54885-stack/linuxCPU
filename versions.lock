@@ -22,9 +22,9 @@ IVERILOG_DEB_SHA256="f19394cee05ad526e0eb3873bc6c17a5828f56df17fbe2db40cb66513a2
 IVERILOG_URL="https://github.com/steveicarus/iverilog.git"
 IVERILOG_COMMIT="4fd5291632232fbe1ba49b2c26bb6b2bf1c6c9cf"
 
-# Ubuntu 24.04 amd64 package, unpacked below .toolchain/verilator.  Verilator
-# is the practical Linux boot simulator; Icarus remains the independent RTL
-# smoke/cross-check implementation.
-VERILATOR_DEB_VERSION="5.020-1"
-VERILATOR_DEB_FILE="verilator_5.020-1_amd64.deb"
-VERILATOR_DEB_SHA256="bb74ca8c32c73eb903ee91da64c8b58cfbe095c229967a95782108afb67bb3ca"
+# Verilator 5.050 source archive (GitHub tag tarball). The Linux RTL build uses
+# --timing, which the Ubuntu 5.020 package does not provide, so setup.sh builds
+# the pinned release into .toolchain/verilator-5.050-install/.
+VERILATOR_URL="https://github.com/verilator/verilator/archive/refs/tags/v5.050.tar.gz"
+VERILATOR_TARBALL="verilator-v5.050.tar.gz"
+VERILATOR_SHA256="ec6723f30c1798b1fbbbed97364f09c431fb4875577c314f37240e99b60a4a04"
